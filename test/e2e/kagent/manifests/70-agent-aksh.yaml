@@ -1,0 +1,20 @@
+# The Agent under test.
+#
+# This object exists so the kagent controller generates the agent's real
+# configuration -- Secret aksh-agent holds config.json and agent-card.json, and
+# ServiceAccount/Service aksh-agent are created alongside it. The Deployment the
+# controller generates from this Agent is NOT the pod the test drives; see
+# 80-agent-shim.yaml for why.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: aksh-agent
+  namespace: kagent
+spec:
+  type: Declarative
+  description: Agent whose egress is captured and policed by an aksh sidecar.
+  declarative:
+    modelConfig: aksh-model-config
+    stream: false
+    systemMessage: |
+      You are a test fixture. Reply with exactly what the user asks for and nothing else.

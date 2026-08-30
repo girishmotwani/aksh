@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an in-flight run obsolete. main is
+# excluded so every commit that lands keeps a complete, non-cancelled result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build-test:
+    name: build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Read the version from go.mod so this never drifts from the module.
+          go-version-file: go.mod
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race is the point of this job: the proxy is heavily concurrent
+      # (accept loop, policy watcher, token cache, buffered audit sink).
+      # -count=1 defeats the test result cache.
+      - name: go test -race
+        run: go test -race -count=1 ./...
+
+  gofmt:
+    name: gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt -l
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted. Run: gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "all files are gofmt-clean"
+
+  bpf-object:
+    name: BPF object is reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # internal/dataplane/bpf/README.md publishes a sha256 for the committed
+      # object and asserts CI fails on any diff. Until now nothing enforced
+      # that, so the object was protected only by manual discipline. Rebuild it
+      # with the pinned toolchain and fail if the result differs from what is
+      # committed -- that catches both an edit to aksh_capture.c without a
+      # regenerate, and a regenerate done with the wrong clang.
+      - name: Build pinned toolchain image
+        run: docker build -f test/ci/bpfgen.Dockerfile -t aksh-bpfgen .
+
+      - name: Record clang version
+        run: docker run --rm aksh-bpfgen clang --version
+
+      - name: Regenerate
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src/internal/dataplane/bpf \
+            aksh-bpfgen \
+            sh -c "go generate ./... && sha256sum akshbpf_bpfel.o akshbpf_bpfel.go"
+
+      - name: Fail if the committed object differs
+        run: |
+          if ! git diff --exit-code -- internal/dataplane/bpf; then
+            echo "::error::The committed BPF artefacts do not match a fresh build."
+            echo "Regenerate locally and commit the result, then update the checksum table in internal/dataplane/bpf/README.md:"
+            echo "  docker build -f test/ci/bpfgen.Dockerfile -t aksh-bpfgen ."
+            echo "  docker run --rm -v \"\$PWD:/src\" -w /src/internal/dataplane/bpf aksh-bpfgen go generate ./..."
+            exit 1
+          fi
+
+  ebpf-integration:
+    name: eBPF integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The design floor is kernel 5.15 with a cgroup v2 unified hierarchy.
+      # Printed so a future failure caused by a runner image change is
+      # diagnosable from the log alone rather than by guesswork.
+      - name: Report kernel and cgroup layout
+        run: |
+          uname -a
+          echo "--- cgroup mounts ---"
+          mount | grep cgroup || true
+          echo "--- cgroup2 controllers ---"
+          cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null || echo "no unified hierarchy at /sys/fs/cgroup"
+
+      # These tests attach real cgroup BPF programs, so they need root. They
+      # are behind the ebpf_integration build tag and do not run in the
+      # build-test job above. sudo -E plus an explicit PATH is required because
+      # setup-go puts the toolchain on the runner user's PATH, not root's.
+      #
+      # CGO_ENABLED=0 is load-bearing, not tidiness. DropPrivileges calls
+      # setgroups through syscall.AllThreadsSyscall, which returns ENOTSUP when
+      # cgo is linked in, so a cgo-linked build fails privilege drop and cannot
+      # start. Production must ship a pure-Go binary for the same reason, so
+      # this job tests what production is meant to ship. See #66.
+      - name: go test -tags ebpf_integration
+        run: |
+          sudo -E env "PATH=$PATH" CGO_ENABLED=0 \
+            go test -tags ebpf_integration -count=1 -v ./internal/dataplane/...

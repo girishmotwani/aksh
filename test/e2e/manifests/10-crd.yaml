@@ -1,0 +1,37 @@
+# AkshPolicy CRD (aksh.dev/v1alpha1), authored from api/v1alpha1/types.go.
+# The spec uses x-kubernetes-preserve-unknown-fields so the schema stays in
+# lockstep with the Go types without hand-maintaining every nested field; the
+# top-level shape (spec.egress.rules[]) is still validated.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: akshpolicies.aksh.dev
+spec:
+  group: aksh.dev
+  scope: Namespaced
+  names:
+    plural: akshpolicies
+    singular: akshpolicy
+    kind: AkshPolicy
+    listKind: AkshPolicyList
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                egress:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    rules:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true

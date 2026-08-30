@@ -1,0 +1,50 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: aksh-injector-validating
+  labels:
+    app.kubernetes.io/name: aksh-injector
+    app.kubernetes.io/part-of: aksh
+webhooks:
+  - name: validate.pods.aksh.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    # Bound the webhook call so a slow/hung injector cannot stall admission
+    # beyond this window before failurePolicy takes effect.
+    timeoutSeconds: 5
+    # Fail closed: if the injector is unavailable, admission is rejected.
+    failurePolicy: Fail
+    # Operator opt-in only; operator-owned label, not a pod-author selector. The
+    # matchExpressions clause ENFORCES in policy that the injector's own
+    # namespace is never self-validated even if mistakenly labelled
+    # aksh.dev/inject=enabled — avoiding a fail-closed self-deadlock.
+    namespaceSelector:
+      matchLabels:
+        aksh.dev/inject: enabled
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ["aksh-system"]
+    clientConfig:
+      service:
+        namespace: aksh-system
+        name: aksh-injector
+        path: /validate
+        port: 443
+      # caBundle intentionally empty: patched at runtime by the injector. The
+      # self-signed CA does not exist until startup, so it cannot be seeded at
+      # deploy time. See 40-mutatingwebhook.yaml for the fail-closed
+      # bootstrap-ordering contract (label workload namespaces only after
+      # /readyz; never label the injector's own namespace).
+      caBundle: ""
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods/ephemeralcontainers"]
+        operations: ["UPDATE"]
+        scope: Namespaced

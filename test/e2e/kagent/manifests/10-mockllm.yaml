@@ -1,0 +1,48 @@
+# Mock OpenAI-compatible upstream. Fronted by a Service named so that the
+# CoreDNS rewrite in run.ps1 can point api.openai.com at it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mockllm
+  namespace: kagent
+  labels:
+    app: mockllm
+spec:
+  selector:
+    app: mockllm
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mockllm
+  namespace: kagent
+  labels:
+    app: mockllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mockllm
+  template:
+    metadata:
+      labels:
+        app: mockllm
+    spec:
+      containers:
+        - name: mockllm
+          image: mockllm:e2e
+          imagePullPolicy: Never
+          env:
+            - name: MOCKLLM_LISTEN
+              value: ":8443"
+          ports:
+            - containerPort: 8443
+          readinessProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 1
+            periodSeconds: 2

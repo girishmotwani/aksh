@@ -1,0 +1,149 @@
+# In-cluster Prometheus for the soak. It is the evidence store: it scrapes
+#   * every aksh proxy's control-plane :15020/metrics (decisions, transport,
+#     and the aksh_decision_duration_seconds histogram = aksh internal latency),
+#   * the kubelet cAdvisor endpoint on every node (container_cpu_usage_seconds
+#     and container_memory_working_set_bytes = aksh CPU / memory under load).
+# It runs in-cluster so the 6h soak survives the operator's session ending; a
+# PVC (default managed disk) keeps the series across a Prometheus pod restart.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: aksh-e2e
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aksh-soak-prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "nodes/metrics", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aksh-soak-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aksh-soak-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: aksh-e2e
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: aksh-e2e
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      # aksh proxies: any pod annotated aksh.dev/scrape=true, on its declared port.
+      - job_name: aksh
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [aksh-e2e]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_aksh_dev_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            action: keep
+            regex: aksh
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_aksh_dev_scrape_port]
+            action: replace
+            regex: (.+);(.+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_role]
+            target_label: role
+      # kubelet cAdvisor on every node: per-container CPU and memory.
+      - job_name: cadvisor
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: aksh-e2e
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: aksh-e2e
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534
+        runAsUser: 65534
+        runAsNonRoot: true
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=8h
+            - --web.enable-lifecycle
+          ports:
+            - { name: web, containerPort: 9090 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "2Gi" }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: data
+          persistentVolumeClaim: { claimName: prometheus-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: aksh-e2e
+spec:
+  selector: { app: prometheus }
+  ports:
+    - { name: web, port: 9090, targetPort: 9090 }

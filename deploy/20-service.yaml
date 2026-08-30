@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aksh-injector
+  namespace: aksh-system
+  labels:
+    app.kubernetes.io/name: aksh-injector
+    app.kubernetes.io/part-of: aksh
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: aksh-injector
+  ports:
+    - name: https
+      port: 443
+      targetPort: 9443
+      protocol: TCP

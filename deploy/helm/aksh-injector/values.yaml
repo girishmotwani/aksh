@@ -1,0 +1,57 @@
+# Default values for the aksh-injector chart.
+# The only two values most operators need to set are `injector.image` and
+# `proxyImage` — point them at images your cluster can pull.
+
+# Namespace the injector runs in. It is created by the chart unless you set
+# createNamespace=false (e.g. when installing with `helm install -n <ns>` into a
+# namespace you manage yourself). This namespace is never an injection target.
+namespace: aksh-system
+createNamespace: true
+
+# Name overrides (rarely needed). Defaults to "aksh-injector".
+nameOverride: ""
+fullnameOverride: ""
+
+injector:
+  image:
+    repository: aksh-injector
+    tag: latest
+    # Use IfNotPresent for side-loaded (kind) images; set Always for a registry.
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Webhook TLS listen port (container) and Prometheus metrics port.
+  listenPort: 9443
+  metricsPort: 9464
+  # How often the injector re-patches its self-signed CA into the webhook
+  # configurations.
+  cabundlePatchInterval: 5m
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# The aksh-proxy sidecar image the injector stamps into every injected pod.
+# THIS MUST BE PULLABLE BY YOUR NODES. Official builds are published to
+# ghcr.io/girishmotwani/aksh-proxy. Pin an immutable tag or digest in
+# production — do not ship :latest.
+proxyImage: aksh-proxy:latest
+
+webhook:
+  # Fail-closed: if the injector is unavailable, pod CREATE in an opted-in
+  # namespace is rejected rather than admitted uncaptured. Do not weaken this
+  # unless you understand you are allowing unprotected pods.
+  failurePolicy: Fail
+  # Bound each webhook call so a slow/hung injector cannot stall admission.
+  timeoutSeconds: 5
+  # Names of the webhook configurations. Must stay in sync with the RBAC
+  # resourceNames and the injector's -mutating/-validating flags (the chart
+  # wires all three from these values).
+  mutatingConfigName: aksh-injector-mutating
+  validatingConfigName: aksh-injector-validating
+  # The operator-owned namespace label that opts a namespace in.
+  injectLabel:
+    key: aksh.dev/inject
+    value: enabled

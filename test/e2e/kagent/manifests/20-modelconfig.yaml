@@ -1,0 +1,25 @@
+# Model configuration pointing kagent at the mock LLM.
+#
+# baseUrl is the real provider hostname on purpose: CoreDNS maps
+# api.openai.com to the in-cluster mockllm Service, and the mock serves a leaf
+# for that name. That way the SNI aksh sees on the captured connection is the
+# same SNI it would see against the real OpenAI, so the AkshPolicy under test
+# is the policy a user would actually write.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: mock-model-config
+  namespace: kagent
+spec:
+  provider: OpenAI
+  model: gpt-4.1-mini
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    baseUrl: https://api.openai.com/v1
+  tls:
+    # Trust the throwaway CA that signed the mock's leaf. Deliberately NOT
+    # disableVerify: the agent must do a real verifying handshake, otherwise
+    # the test would not prove that a normal client works through aksh.
+    caCertSecretRef: mockllm-ca
+    caCertSecretKey: ca.crt

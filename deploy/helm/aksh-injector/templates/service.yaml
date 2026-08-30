@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aksh-injector.fullname" . }}
+  namespace: {{ include "aksh-injector.namespace" . }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "aksh-injector.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: 443
+      targetPort: {{ .Values.injector.listenPort }}
+      protocol: TCP

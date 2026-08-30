@@ -1,0 +1,10 @@
+{{- if .Values.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "aksh-injector.namespace" . }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+    # The injector namespace itself is never an injection target.
+    {{ .Values.webhook.injectLabel.key }}: disabled
+{{- end }}

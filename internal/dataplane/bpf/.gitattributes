@@ -1,0 +1,10 @@
+# The committed BPF object embeds BTF line information, which contains the
+# source lines verbatim - including a trailing CR if the checkout has CRLF
+# endings. A CRLF checkout therefore regenerates a byte-different object and
+# breaks the CI regenerate-and-diff check of ADR-S1a-05. Pin LF here so the
+# object is reproducible from a Windows checkout as well as a Linux one.
+*.c text eol=lf
+*.h text eol=lf
+*.go text eol=lf
+*.md text eol=lf
+*.o binary

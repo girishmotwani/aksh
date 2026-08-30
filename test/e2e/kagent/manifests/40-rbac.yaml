@@ -1,0 +1,36 @@
+# Identity for the shim pod that carries the aksh sidecar.
+#
+# The pod needs two unrelated things from its ServiceAccount: a projected token
+# with the "kagent" audience (the agent container authenticates to the kagent
+# controller with it) and read-only access to AkshPolicy in its own namespace
+# (the proxy's policy watcher refuses to read any other namespace -- see
+# internal/policy/watch/client.go).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aksh-kagent
+  namespace: kagent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aksh-kagent-policy-reader
+  namespace: kagent
+rules:
+  - apiGroups: ["aksh.dev"]
+    resources: ["akshpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aksh-kagent-policy-reader
+  namespace: kagent
+subjects:
+  - kind: ServiceAccount
+    name: aksh-kagent
+    namespace: kagent
+roleRef:
+  kind: Role
+  name: aksh-kagent-policy-reader
+  apiGroup: rbac.authorization.k8s.io

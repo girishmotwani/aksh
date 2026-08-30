@@ -1,0 +1,6 @@
+# Local, per-run artifacts - never commit these.
+.kubeconfig
+.certs/
+.mockllm/
+.rendered/
+*.log

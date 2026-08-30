@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aksh-injector.fullname" . }}
+  namespace: {{ include "aksh-injector.namespace" . }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.injector.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aksh-injector.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aksh-injector.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "aksh-injector.fullname" . }}
+      containers:
+        - name: aksh-injector
+          image: {{ include "aksh-injector.image" . | quote }}
+          imagePullPolicy: {{ .Values.injector.image.pullPolicy }}
+          args:
+            - "-addr=:{{ .Values.injector.listenPort }}"
+            - "-metrics-addr=:{{ .Values.injector.metricsPort }}"
+            - "-service-name={{ include "aksh-injector.fullname" . }}"
+            - "-service-namespace={{ include "aksh-injector.namespace" . }}"
+            - "-mutating-webhook-configuration={{ .Values.webhook.mutatingConfigName }}"
+            - "-validating-webhook-configuration={{ .Values.webhook.validatingConfigName }}"
+            - "-cabundle-patch-interval={{ .Values.injector.cabundlePatchInterval }}"
+            # The sidecar image injected into workload pods.
+            - "-proxy-image={{ .Values.proxyImage }}"
+          env:
+            - name: AKSH_INJECTOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: https
+              containerPort: {{ .Values.injector.listenPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.injector.metricsPort }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.injector.listenPort }}
+              scheme: HTTPS
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.injector.listenPort }}
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.injector.resources | nindent 12 }}

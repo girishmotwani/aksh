@@ -1,0 +1,23 @@
+# The policy the agent's LLM egress is judged against.
+#
+# host is api.openai.com because that is the SNI the agent presents: CoreDNS
+# maps that name to the in-cluster mock, so the rule under test is the rule a
+# real user would write against real OpenAI.
+#
+# There is deliberately no rule for the denied-host probe (blocked.test): the
+# absence of a matching rule is what produces the uniform deny, and the e2e
+# asserts on that leg as well as the allow leg.
+apiVersion: aksh.dev/v1alpha1
+kind: AkshPolicy
+metadata:
+  name: allow-openai
+  namespace: kagent
+spec:
+  # Selector-less: the watcher passes empty pod labels, so a nil selector is
+  # required for the rule to take effect at all.
+  egress:
+    rules:
+      - name: allow-openai
+        to:
+          host: api.openai.com
+        effect: Allow

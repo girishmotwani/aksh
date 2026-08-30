@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aksh-injector
+  namespace: aksh-system
+  labels:
+    app.kubernetes.io/name: aksh-injector
+    app.kubernetes.io/part-of: aksh
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aksh-injector
+  labels:
+    app.kubernetes.io/name: aksh-injector
+    app.kubernetes.io/part-of: aksh
+rules:
+  # The injector patches its own admission webhook configurations with the
+  # self-signed CA bundle at runtime. It reads and updates only its two named
+  # configurations (by Get + Update; no informer, so no list/watch), so the
+  # grant is scoped to those resourceNames and minimal verbs to keep the blast
+  # radius off every other admission webhook in the cluster.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    resourceNames: ["aksh-injector-mutating", "aksh-injector-validating"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aksh-injector
+  labels:
+    app.kubernetes.io/name: aksh-injector
+    app.kubernetes.io/part-of: aksh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aksh-injector
+subjects:
+  - kind: ServiceAccount
+    name: aksh-injector
+    namespace: aksh-system

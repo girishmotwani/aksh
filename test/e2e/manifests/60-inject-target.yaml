@@ -1,0 +1,15 @@
+# Plain workload with NO aksh sidecar. Applied to the opted-in aksh-e2e
+# namespace, the mutating webhook must prepend the canonical aksh sidecar.
+# We only assert on the mutated object; the pod does not need to reach Ready.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inject-target
+  labels: { app: inject-target }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: aksh-proxy:latest
+      imagePullPolicy: Never
+      command: ["/bin/sh", "-c", "sleep 3600"]

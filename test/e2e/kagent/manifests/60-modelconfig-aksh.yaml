@@ -1,0 +1,29 @@
+# Model configuration for the agent that sits behind aksh.
+#
+# Identical to 20-modelconfig.yaml except for the trust anchor: this agent's TLS
+# handshake to api.openai.com is terminated by aksh, not by the mock, so the
+# certificate it must verify is minted by the aksh pod CA. caCertSecretRef
+# therefore points at the pre-seeded pod CA rather than the mock's CA.
+#
+# The path this produces in the generated config.json is
+# /etc/ssl/certs/custom/aksh-pod-ca/ca-cert.pem -- kagent derives it from the
+# secret name and key, and the shim Deployment mounts the same secret there.
+#
+# disableVerify is deliberately NOT set. The whole point of the test is that a
+# normal, fully verifying client works through aksh; an agent that skipped
+# verification would prove nothing about the MITM being well-formed.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: aksh-model-config
+  namespace: kagent
+spec:
+  provider: OpenAI
+  model: gpt-4.1-mini
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    baseUrl: https://api.openai.com/v1
+  tls:
+    caCertSecretRef: aksh-pod-ca
+    caCertSecretKey: ca-cert.pem

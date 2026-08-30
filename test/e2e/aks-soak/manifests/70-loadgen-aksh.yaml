@@ -1,0 +1,131 @@
+# aksh-CAPTURED load generator. The aksh proxy sidecar (uid 1774, capture
+# excluded) plus a fortio load container (uid 0, captured) that drives sustained
+# HTTPS traffic at ${QPS} qps to allowed.test. Every request is redirected by
+# eBPF into the proxy, policy-evaluated (Allow), and relayed to the echo
+# upstream, so fortio's measured latency IS the end-to-end latency WITH aksh in
+# path. Compare it against 71-loadgen-baseline (identical fortio, no aksh) to get
+# the latency impact, and read aksh CPU/memory for this pod from Prometheus
+# cAdvisor. run.ps1 substitutes ${ACR}, ${QPS}, ${CONN}, ${INTERVAL}.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: loadgen-aksh
+  namespace: aksh-e2e
+  annotations:
+    aksh.dev/injected: v1
+    aksh.dev/scrape: "true"
+    aksh.dev/scrape-port: "15020"
+  labels: { app: loadgen-aksh, role: aksh }
+spec:
+  serviceAccountName: aksh-proxy
+  hostPID: true
+  restartPolicy: Always
+  # fortio resolves allowed.test to the echo clusterIP; the TLS SNI stays
+  # allowed.test so the proxy's policy match and the upstream leaf both line up.
+  hostAliases:
+    - ip: "10.0.100.100"
+      hostnames: ["allowed.test"]
+  securityContext:
+    fsGroup: 1774
+  volumes:
+    - name: hostcgroup
+      hostPath: { path: /sys/fs/cgroup }
+    - name: podinfo
+      downwardAPI:
+        items:
+          - { path: labels, fieldRef: { fieldPath: metadata.labels } }
+    - name: ca-priv
+      emptyDir: {}
+    - name: ca-pub
+      emptyDir: {}
+    - name: reports
+      emptyDir: {}
+    - name: entra-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: api://AzureADTokenExchange
+              expirationSeconds: 3600
+    - name: upstream-ca
+      configMap:
+        name: upstream-ca
+  containers:
+    - name: aksh
+      image: ${ACR}/aksh-proxy:soak
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        runAsUser: 1774
+        runAsGroup: 1774
+        appArmorProfile:
+          type: Unconfined
+        capabilities:
+          add: ["BPF", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_RESOURCE", "PERFMON", "SETGID", "SETUID", "SETPCAP"]
+      env:
+        - name: POD_IP
+          valueFrom: { fieldRef: { fieldPath: status.podIP } }
+        - name: AKSH_POD_NAMESPACE
+          valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+        - name: AKSH_POD_NAME
+          valueFrom: { fieldRef: { fieldPath: metadata.name } }
+        - name: AKSH_POD_UID
+          valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+        - name: AKSH_AGENT_SERVICE_ACCOUNT
+          valueFrom: { fieldRef: { fieldPath: spec.serviceAccountName } }
+        - { name: AKSH_POLICY_NAMESPACE, value: "aksh-e2e" }
+        - { name: AKSH_SA_TOKEN_PATH, value: "/var/run/secrets/aksh/token" }
+        - { name: AKSH_ENTRA_TENANT_ID, value: "11111111-1111-1111-1111-111111111111" }
+        - { name: AKSH_ENTRA_CLIENT_ID, value: "22222222-2222-2222-2222-222222222222" }
+        - { name: AKSH_ENTRA_AUTHORITY, value: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111" }
+        - { name: AKSH_AUDIT_SINK, value: "stdout" }
+        - { name: AKSH_CA_PRIV_DIR, value: "/var/lib/aksh/ca-priv" }
+        - { name: AKSH_CA_PUB_DIR, value: "/var/lib/aksh/ca-pub" }
+        - { name: AKSH_CAPTURE_HOST_CGROUP_MOUNT, value: "/host/sys/fs/cgroup" }
+        - { name: AKSH_CAPTURE_LOCAL_CGROUP_MOUNT, value: "/sys/fs/cgroup" }
+        - { name: AKSH_CAPTURE_MOUNT_BPFFS, value: "true" }
+        - { name: AKSH_CAPTURE_PROXY_UID, value: "1774" }
+        - { name: AKSH_CAPTURE_PROXY_GID, value: "1774" }
+        - { name: AKSH_CAPTURE_BLOCK_NON_TCP, value: "true" }
+        - { name: AKSH_CAPTURE_RUN_PROBE, value: "true" }
+        - { name: AKSH_POLICY_FIRST_SNAPSHOT_TIMEOUT, value: "300s" }
+      command:
+        - /usr/local/bin/aksh-proxy
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+      volumeMounts:
+        - { name: hostcgroup, mountPath: /host/sys/fs/cgroup }
+        - { name: ca-priv, mountPath: /var/lib/aksh/ca-priv }
+        - { name: ca-pub, mountPath: /var/lib/aksh/ca-pub }
+        - { name: entra-token, mountPath: /var/run/secrets/aksh, readOnly: true }
+        - { name: upstream-ca, mountPath: /etc/aksh/upstream-ca, readOnly: true }
+        - { name: podinfo, mountPath: /etc/aksh/podinfo, readOnly: true }
+    - name: fortio
+      image: ${ACR}/loadgen:soak
+      imagePullPolicy: IfNotPresent
+      env:
+        - { name: QPS, value: "${QPS}" }
+        - { name: CONN, value: "${CONN}" }
+        - { name: INTERVAL, value: "${INTERVAL}" }
+        - { name: LOADGEN_MODE, value: "${MODE}" }
+      command:
+        - /bin/sh
+        - -c
+        - |
+          if [ "${LOADGEN_MODE}" = "idle" ]; then
+            echo "[loadgen-aksh] idle mode - awaiting exec-driven fortio runs"
+            exec sleep infinity
+          fi
+          echo "[loadgen-aksh] driving ${QPS} qps c=${CONN} to allowed.test (via aksh)"
+          i=0
+          while true; do
+            i=$((i+1))
+            /usr/bin/fortio load -quiet -qps "${QPS}" -c "${CONN}" -t "${INTERVAL}s" \
+              -https-insecure -json "/reports/aksh-latest.json" \
+              "https://allowed.test:8443/" >/dev/null 2>&1 || true
+            cp -f /reports/aksh-latest.json "/reports/aksh-$i.json" 2>/dev/null || true
+            echo "[loadgen-aksh] batch $i complete ($(date -u +%H:%M:%S))"
+          done
+      resources:
+        requests: { cpu: "500m", memory: "128Mi" }
+      volumeMounts:
+        - { name: reports, mountPath: /reports }

@@ -1,0 +1,64 @@
+# Minimal kagent install for the aksh e2e.
+#
+# The default chart brings ~10 built-in agent pods, a bundled PostgreSQL, the
+# tools MCP server and querydoc - roughly 1.6 CPU and 4.7Gi of requests, which
+# is more than a single-node kind cluster should be asked to carry for a test
+# that only needs one agent to make one outbound LLM call.
+#
+# Everything here is switched off except the controller, which is what
+# reconciles the Agent CR into the per-agent Deployment this test attaches the
+# aksh sidecar to.
+
+# The UI is a human convenience; the harness drives the agent over A2A. The
+# chart has no ui.enabled flag, so it is scaled to zero instead.
+ui:
+  replicas: 0
+
+# The controller refuses to render without a database connection - there is no
+# sqlite option - so the bundled PostgreSQL stays on. It costs 250m/256Mi and a
+# 500Mi PVC, which kind's default local-path provisioner satisfies. Only the
+# controller talks to it, and the controller is not captured, so it is outside
+# the flow under test.
+database:
+  postgres:
+    vectorEnabled: false
+    bundled:
+      enabled: true
+
+# The test agent is declarative with no tools, so neither MCP server is needed.
+kagent-tools:
+  enabled: false
+querydoc:
+  enabled: false
+kmcp:
+  enabled: false
+
+# Built-in agents. Each one becomes its own Deployment; none of them are the
+# agent under test.
+k8s-agent:
+  enabled: false
+kgateway-agent:
+  enabled: false
+istio-agent:
+  enabled: false
+promql-agent:
+  enabled: false
+observability-agent:
+  enabled: false
+argo-rollouts-agent:
+  enabled: false
+helm-agent:
+  enabled: false
+cilium-policy-agent:
+  enabled: false
+cilium-manager-agent:
+  enabled: false
+cilium-debug-agent:
+  enabled: false
+grafana-mcp:
+  enabled: false
+
+# The ModelConfig this test applies carries its own (dummy) key, so no provider
+# secret is needed at install time.
+providers:
+  default: openAI

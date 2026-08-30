@@ -1,0 +1,51 @@
+# BASELINE load generator: identical fortio load to 70-loadgen-aksh, but with NO
+# aksh sidecar and NO capture. It talks TLS directly to the echo upstream, so its
+# latency percentiles are the control. aksh latency impact = loadgen-aksh p50/p90
+# /p99 minus these. Kept in the same namespace and on the same node class so the
+# only difference measured is aksh itself. run.ps1 substitutes ${QPS} ${CONN}
+# ${INTERVAL}.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: loadgen-baseline
+  namespace: aksh-e2e
+  labels: { app: loadgen-baseline, role: baseline }
+spec:
+  restartPolicy: Always
+  hostAliases:
+    - ip: "10.0.100.100"
+      hostnames: ["allowed.test"]
+  volumes:
+    - name: reports
+      emptyDir: {}
+  containers:
+    - name: fortio
+      image: ${ACR}/loadgen:soak
+      imagePullPolicy: IfNotPresent
+      env:
+        - { name: QPS, value: "${QPS}" }
+        - { name: CONN, value: "${CONN}" }
+        - { name: INTERVAL, value: "${INTERVAL}" }
+        - { name: LOADGEN_MODE, value: "${MODE}" }
+      command:
+        - /bin/sh
+        - -c
+        - |
+          if [ "${LOADGEN_MODE}" = "idle" ]; then
+            echo "[loadgen-baseline] idle mode - awaiting exec-driven fortio runs"
+            exec sleep infinity
+          fi
+          echo "[loadgen-baseline] driving ${QPS} qps c=${CONN} to allowed.test (direct, no aksh)"
+          i=0
+          while true; do
+            i=$((i+1))
+            /usr/bin/fortio load -quiet -qps "${QPS}" -c "${CONN}" -t "${INTERVAL}s" \
+              -https-insecure -json "/reports/baseline-latest.json" \
+              "https://allowed.test:8443/" >/dev/null 2>&1 || true
+            cp -f /reports/baseline-latest.json "/reports/baseline-$i.json" 2>/dev/null || true
+            echo "[loadgen-baseline] batch $i complete ($(date -u +%H:%M:%S))"
+          done
+      resources:
+        requests: { cpu: "500m", memory: "128Mi" }
+      volumeMounts:
+        - { name: reports, mountPath: /reports }

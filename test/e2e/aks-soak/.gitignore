@@ -1,0 +1,7 @@
+# Local, per-run artifacts - never commit these.
+.kubeconfig
+EVIDENCE.md
+CHURN.md
+RAMP.md
+*.soak.log
+*.soak.log.err

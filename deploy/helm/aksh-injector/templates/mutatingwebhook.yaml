@@ -1,0 +1,43 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.mutatingConfigName }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+webhooks:
+  - name: mutate.pods.aksh.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    # Fail closed: if the injector is unavailable, pod creation is rejected
+    # rather than admitted uncaptured.
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    # Operator opt-in only. This is an operator-owned namespace label, never a
+    # pod-author selector, so workloads cannot opt themselves out of capture.
+    # The matchExpressions clause ENFORCES in policy that the injector's own
+    # namespace is never self-targeted, avoiding a fail-closed self-deadlock
+    # during injector (re)start.
+    namespaceSelector:
+      matchLabels:
+        {{ .Values.webhook.injectLabel.key }}: {{ .Values.webhook.injectLabel.value }}
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ["{{ include "aksh-injector.namespace" . }}"]
+    clientConfig:
+      service:
+        namespace: {{ include "aksh-injector.namespace" . }}
+        name: {{ include "aksh-injector.fullname" . }}
+        path: /mutate
+        port: 443
+      # caBundle intentionally empty: the injector patches it at runtime with
+      # its self-signed serving CA (the CA does not exist until startup, so it
+      # cannot be seeded at deploy time). Bootstrap-ordering contract: label a
+      # workload namespace only AFTER the injector reports /readyz.
+      caBundle: ""
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced

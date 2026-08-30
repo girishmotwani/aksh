@@ -1,0 +1,40 @@
+# AKS variant of test/e2e/manifests/40-targets.yaml.
+# Differences from the kind harness:
+#   * image pulled from ACR (AKS nodes have no local image store / kind load).
+#   * clusterIP moved into the AKS service CIDR (10.0.0.0/16); kind used 10.96/12.
+# ${ACR} is substituted by run.ps1 before apply.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-upstream
+  namespace: aksh-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: echo-upstream }
+  template:
+    metadata:
+      labels: { app: echo-upstream }
+    spec:
+      containers:
+        - name: echo
+          image: ${ACR}/echo:soak
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: ECHO_LISTEN, value: ":8443" }
+            - { name: ECHO_MSG, value: "ALLOWED-UPSTREAM-OK" }
+          ports:
+            - containerPort: 8443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-upstream
+  namespace: aksh-e2e
+spec:
+  clusterIP: 10.0.100.100          # fixed within the AKS service CIDR so the workload --resolve targets a stable original-dst
+  selector: { app: echo-upstream }
+  ports:
+    - name: https
+      port: 8443
+      targetPort: 8443

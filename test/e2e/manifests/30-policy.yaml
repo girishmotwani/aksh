@@ -1,0 +1,15 @@
+apiVersion: aksh.dev/v1alpha1
+kind: AkshPolicy
+metadata:
+  name: allow-echo-upstream
+  namespace: aksh-e2e
+spec:
+  # selector-less: applies to all pods in the namespace (the watcher passes empty
+  # pod labels, so a nil selector is required for the rule to take effect).
+  egress:
+    rules:
+      - name: allow-echo
+        to:
+          host: allowed.test          # matched against the TLS SNI / Host presented by the workload
+        allowPlaintext: true          # relay plaintext to the upstream; no Entra credential required
+        effect: Allow

@@ -1,0 +1,27 @@
+aksh-injector installed.
+
+The injector runs in namespace: {{ include "aksh-injector.namespace" . }}
+Injected sidecar image (proxyImage): {{ .Values.proxyImage }}
+Webhook failurePolicy: {{ .Values.webhook.failurePolicy }} (fail-closed)
+
+NEXT STEPS — do them in this order:
+
+  1) Wait until the injector is Ready (its caBundle is patched only when Ready):
+
+       kubectl -n {{ include "aksh-injector.namespace" . }} rollout status deploy/{{ include "aksh-injector.fullname" . }}
+
+  2) ONLY THEN opt a workload namespace in (repeat for each namespace you want
+     protected — your pods stay in their own namespaces):
+
+       kubectl label namespace <your-namespace> {{ .Values.webhook.injectLabel.key }}={{ .Values.webhook.injectLabel.value }}
+
+  3) Create (or restart) workloads in that namespace. The aksh-proxy sidecar is
+     injected on pod CREATE — existing pods are not retro-injected:
+
+       kubectl -n <your-namespace> rollout restart deploy/<app>
+
+WHY ORDER MATTERS: failurePolicy is Fail. If you label a namespace before the
+injector is Ready, pod creation there is blocked until it is. Never label the
+injector's own namespace ({{ include "aksh-injector.namespace" . }}).
+
+Full guide: deploy/README.md

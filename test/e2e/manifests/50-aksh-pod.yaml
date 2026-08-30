@@ -1,0 +1,136 @@
+# aksh e2e pod: the production proxy (uid 1774, captured-excluded) plus a
+# captured workload (uid 0) that drives allowed.test + blocked.test in a loop.
+#
+# Topology notes (why this pod is shaped the way it is):
+#   * hostPID + hostPath /sys/fs/cgroup: the eBPF connect4 hook attaches to the
+#     pod's V2 cgroup so the proxy can capture the workload's egress.
+#   * runAsUser 1774 on the proxy: capture EXCLUDES the proxy's own uid, so the
+#     proxy's upstream dials are not re-captured (no loop). The workload runs as
+#     uid 0 and IS captured.
+#   * capabilities.add on the proxy container seed the bounding set; the file
+#     caps baked into the image (test/e2e/Dockerfile setcap) are what actually
+#     grant CAP_BPF et al. at execve for the non-root uid.
+#   * The proxy's runtime keeps CAP_BPF across its internal priv-drop
+#     (orchestrator.go KeepCapabilities) -- without that the eBPF loader gets
+#     EPERM after drop. Regression: TestRun_PrivDropReceivesUIDGID1774.
+#   * The workload MUST drive live traffic (looping curl): the production
+#     orchestrator only wires the accepting half, and the accept-probe times out
+#     (terminating the proxy) if no captured egress arrives.
+#   * curl uses --http1.1: the request path is HTTP/1.1-only. See echo/main.go.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: aksh-e2e
+  namespace: aksh-e2e
+  annotations:
+    aksh.dev/injected: v1
+  labels: { app: aksh-e2e }
+spec:
+  serviceAccountName: aksh-proxy
+  hostPID: true
+  restartPolicy: Never
+  securityContext:
+    fsGroup: 1774
+  volumes:
+    - name: hostcgroup
+      hostPath: { path: /sys/fs/cgroup }
+    - name: podinfo
+      downwardAPI:
+        items:
+          - { path: labels, fieldRef: { fieldPath: metadata.labels } }
+    - name: ca-priv
+      emptyDir: {}
+    - name: ca-pub
+      emptyDir: {}
+    - name: entra-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: api://AzureADTokenExchange
+              expirationSeconds: 3600
+    - name: upstream-ca
+      configMap:
+        name: upstream-ca
+  containers:
+    - name: aksh
+      image: aksh-proxy:e2e
+      imagePullPolicy: Never
+      securityContext:
+        runAsUser: 1774
+        runAsGroup: 1774
+        capabilities:
+          add: ["BPF", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_RESOURCE", "PERFMON", "SETGID", "SETUID", "SETPCAP"]
+      env:
+        - name: POD_IP
+          valueFrom: { fieldRef: { fieldPath: status.podIP } }
+        # S5 Downward API pod attribution + service account for the audit record
+        # (issue #62). Replicas share a ServiceAccount, so the pod triple is the
+        # only thing distinguishing them (ADR-S0-06).
+        - name: AKSH_POD_NAMESPACE
+          valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+        - name: AKSH_POD_NAME
+          valueFrom: { fieldRef: { fieldPath: metadata.name } }
+        - name: AKSH_POD_UID
+          valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+        - name: AKSH_AGENT_SERVICE_ACCOUNT
+          valueFrom: { fieldRef: { fieldPath: spec.serviceAccountName } }
+        - { name: AKSH_POLICY_NAMESPACE, value: "aksh-e2e" }
+        - { name: AKSH_SA_TOKEN_PATH, value: "/var/run/secrets/aksh/token" }
+        - { name: AKSH_ENTRA_TENANT_ID, value: "11111111-1111-1111-1111-111111111111" }
+        - { name: AKSH_ENTRA_CLIENT_ID, value: "22222222-2222-2222-2222-222222222222" }
+        - { name: AKSH_ENTRA_AUTHORITY, value: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111" }
+        - { name: AKSH_AUDIT_SINK, value: "stdout" }
+        - { name: AKSH_CA_PRIV_DIR, value: "/var/lib/aksh/ca-priv" }
+        - { name: AKSH_CA_PUB_DIR, value: "/var/lib/aksh/ca-pub" }
+        - { name: AKSH_CAPTURE_HOST_CGROUP_MOUNT, value: "/host/sys/fs/cgroup/unified" }
+        # Preflight gate P3 requires the proxy's own cgroup2 mount. The default
+        # (/sys/fs/cgroup) is correct on a pure cgroup-v2 node, but this kind
+        # node is a hybrid v1/v2 host where /sys/fs/cgroup is tmpfs and the
+        # cgroup2 hierarchy lives under unified/. A pod gets no cgroup2 mount of
+        # its own here, so P3 is pointed at the same hostPath bind as P4.
+        - { name: AKSH_CAPTURE_LOCAL_CGROUP_MOUNT, value: "/host/sys/fs/cgroup/unified" }
+        # Preflight gate P6 requires bpffs at PinRoot. A pod sees /sys/fs/bpf as
+        # plain sysfs (the container gets a fresh sysfs, not the node's bpffs),
+        # so the proxy mounts a bpffs itself using the CAP_SYS_ADMIN it already
+        # holds. This mount lives in the pod's mount namespace, which is the
+        # per-pod bpffs the design requires for production (S1a section 429) and
+        # avoids sharing the node's bpffs with every other pod.
+        - { name: AKSH_CAPTURE_MOUNT_BPFFS, value: "true" }
+        - { name: AKSH_CAPTURE_PROXY_UID, value: "1774" }
+        - { name: AKSH_CAPTURE_PROXY_GID, value: "1774" }
+        - { name: AKSH_CAPTURE_BLOCK_NON_TCP, value: "true" }
+        - { name: AKSH_CAPTURE_RUN_PROBE, value: "true" }
+        - { name: AKSH_POLICY_FIRST_SNAPSHOT_TIMEOUT, value: "300s" }
+      command:
+        - /usr/local/bin/aksh-proxy
+      volumeMounts:
+        - { name: hostcgroup, mountPath: /host/sys/fs/cgroup }
+        - { name: ca-priv, mountPath: /var/lib/aksh/ca-priv }
+        - { name: ca-pub, mountPath: /var/lib/aksh/ca-pub }
+        - { name: entra-token, mountPath: /var/run/secrets/aksh, readOnly: true }
+        - { name: upstream-ca, mountPath: /etc/aksh/upstream-ca, readOnly: true }
+        - { name: podinfo, mountPath: /etc/aksh/podinfo, readOnly: true }
+    - name: workload
+      image: aksh-proxy:e2e
+      imagePullPolicy: Never
+      command:
+        - /bin/sh
+        - -c
+        - |
+          # Captured workload (uid 0): eBPF redirects its egress to the proxy.
+          #   allowed.test -> policy Allow rule -> relay to echo upstream (HTTP 200)
+          #   blocked.test -> no matching rule   -> uniform deny (HTTP 403)
+          # -k because the proxy presents a pod-CA leaf the workload doesn't trust;
+          # VIA=127.0.0.1 proves the flow went through the proxy listener.
+          echo "[workload] starting egress driver (http1.1) as uid $(id -u)"
+          UP=10.96.100.100
+          probe() {
+            curl -sk --http1.1 -m 4 -w ' CODE=%{http_code} VIA=%{remote_ip}' \
+              --resolve "$1:8443:$UP" "https://$1:8443/" 2>/dev/null
+          }
+          while true; do
+            A=$(probe allowed.test); echo "[workload] ALLOW -> $A"
+            B=$(probe blocked.test); echo "[workload] BLOCK -> $B"
+            sleep 2
+          done

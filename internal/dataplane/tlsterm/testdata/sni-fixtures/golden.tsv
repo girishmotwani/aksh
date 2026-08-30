@@ -1,0 +1,25 @@
+# SNI canonicalisation golden fixtures (spec row #278).
+# Format: input<TAB>expected-canonical-output, or input<TAB>ERROR:ErrXxx for
+# cases expected to return an error, where ErrXxx names the sentinel error.
+svc.ns.svc.cluster.local	svc.ns.svc.cluster.local
+Svc.NS.svc.Cluster.Local	svc.ns.svc.cluster.local
+svc.ns.svc.cluster.local.	svc.ns.svc.cluster.local
+SVC.NS.SVC.CLUSTER.LOCAL.	svc.ns.svc.cluster.local
+example.com	example.com
+EXAMPLE.COM	example.com
+a.b.c.d.e.f.example.com	a.b.c.d.e.f.example.com
+xn--mnchen-3ya.example.com	xn--mnchen-3ya.example.com
+foo-bar.example.com	foo-bar.example.com
+a1.b2.example.com	a1.b2.example.com
+	ERROR:ErrEmptySNI
+127.0.0.1	ERROR:ErrInvalidSNI
+::1	ERROR:ErrInvalidSNI
+0.0.0.0	ERROR:ErrInvalidSNI
+localhost	ERROR:ErrInvalidSNI
+*.example.com	ERROR:ErrInvalidSNI
+-svc.ns.svc.cluster.local	ERROR:ErrInvalidSNI
+svc-.ns.svc.cluster.local	ERROR:ErrInvalidSNI
+svc..ns	ERROR:ErrInvalidSNI
+svc_ns.example.com	ERROR:ErrInvalidSNI
+münchen.example.com	ERROR:ErrInvalidSNI
+svc ns.example.com	ERROR:ErrInvalidSNI

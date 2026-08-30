@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "aksh-injector.fullname" . }}
+  namespace: {{ include "aksh-injector.namespace" . }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aksh-injector.fullname" . }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+rules:
+  # The injector patches its own admission webhook configurations with the
+  # self-signed CA bundle at runtime. It reads and updates only its two named
+  # configurations (Get + Update; no informer, so no list/watch), so the grant
+  # is scoped to those resourceNames and minimal verbs to keep the blast radius
+  # off every other admission webhook in the cluster.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    resourceNames:
+      - {{ .Values.webhook.mutatingConfigName }}
+      - {{ .Values.webhook.validatingConfigName }}
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "aksh-injector.fullname" . }}
+  labels:
+    {{- include "aksh-injector.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "aksh-injector.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aksh-injector.fullname" . }}
+    namespace: {{ include "aksh-injector.namespace" . }}

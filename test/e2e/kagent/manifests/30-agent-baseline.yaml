@@ -1,0 +1,15 @@
+# Baseline agent: no aksh sidecar. Used to establish that the agent works at
+# all, and to record what it dials, before aksh is put in front of it.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: baseline-agent
+  namespace: kagent
+spec:
+  type: Declarative
+  description: Baseline agent used to characterise kagent egress before aksh is added.
+  declarative:
+    modelConfig: mock-model-config
+    stream: false
+    systemMessage: |
+      You are a test fixture. Reply with exactly what the user asks for and nothing else.

@@ -1,0 +1,52 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: aksh-injector-mutating
+  labels:
+    app.kubernetes.io/name: aksh-injector
+    app.kubernetes.io/part-of: aksh
+webhooks:
+  - name: mutate.pods.aksh.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    # Bound the webhook call so a slow/hung injector cannot stall pod CREATE
+    # beyond this window before failurePolicy takes effect.
+    timeoutSeconds: 5
+    # Fail closed: if the injector is unavailable, pod creation is rejected
+    # rather than admitted uncaptured.
+    failurePolicy: Fail
+    # Operator opt-in only. This is an operator-owned namespace label, never a
+    # pod-author selector, so workloads cannot opt out of capture. The
+    # matchExpressions clause ENFORCES in policy (not merely by operator
+    # procedure) that the injector's own namespace is never self-targeted, even
+    # if it is mistakenly labelled aksh.dev/inject=enabled — avoiding a
+    # fail-closed self-deadlock during injector (re)start.
+    namespaceSelector:
+      matchLabels:
+        aksh.dev/inject: enabled
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ["aksh-system"]
+    clientConfig:
+      service:
+        namespace: aksh-system
+        name: aksh-injector
+        path: /mutate
+        port: 443
+      # caBundle intentionally empty: the injector patches it at runtime with
+      # its self-signed serving CA. The CA does not exist until the injector
+      # generates it at startup, so it CANNOT be seeded at deploy time.
+      # Bootstrap-ordering contract (fail-closed is deliberate): the injector's
+      # own namespace must NOT carry the aksh.dev/inject=enabled label, and an
+      # operator must label a workload namespace only AFTER the injector reports
+      # /readyz (which is gated on a successful caBundle patch). This keeps the
+      # empty-caBundle + failurePolicy:Fail window from ever gating the control
+      # plane or an opted-in namespace.
+      caBundle: ""
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced

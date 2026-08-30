@@ -1,0 +1,19 @@
+# INV-10 negative: a workload that tries to add a reserved capture capability
+# (NET_ADMIN) to its own app container. After the mutating webhook prepends the
+# aksh sidecar, the validating webhook must DENY this pod
+# ("must not add privileged capabilities"). kubectl apply is expected to fail.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tamper-target
+  labels: { app: tamper-target }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: aksh-proxy:latest
+      imagePullPolicy: Never
+      command: ["/bin/sh", "-c", "sleep 3600"]
+      securityContext:
+        capabilities:
+          add: ["NET_ADMIN"]
