@@ -171,13 +171,12 @@ func TestNewDirectDialer(t *testing.T) {
 	})
 
 	t.Run("Validate_NilMetricsRecorderReference_ReturnsErrMissingMetrics", func(t *testing.T) {
-		// UpstreamOptions itself carries no MetricsRecorder field (that is
-		// a separate constructor parameter to NewDirectDialer -- see
-		// a separate constructor parameter), so the nil-metrics check
-		// is performed by NewDirectDialer, not
+		// UpstreamOptions itself carries no MetricsRecorder field (it is
+		// a separate constructor parameter to NewDirectDialer), so the
+		// nil-metrics check is performed by NewDirectDialer, not
 		// UpstreamOptions.Validate(). Exercised end-to-end above by
 		// NewDirectDialer_NilMetricsRecorder_ReturnsErrMissingMetrics;
-		// this subtest documents the row-#360 mapping under its own
+		// this subtest documents that mapping under its own
 		// spec-required name.
 		reg := listener.NewSelfDialRegistry()
 		_, err := upstream.NewDirectDialer(validUpstreamOptions(), reg, nil)
@@ -510,11 +509,14 @@ func TestDialUpstreamDialAndHandshake(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// A private, non-routed address (confirmed unreachable in this
-		// environment) that will not itself respond within the
-		// configured DialTimeout, so the context deadline -- not a real
-		// refusal -- determines the outcome.
-		addr := netip.MustParseAddrPort("10.255.255.1:81")
+		// A non-routable TEST-NET-1 address (RFC 5737), which is reserved
+		// for documentation and is never routed, so the SYN is blackholed
+		// and the configured DialTimeout -- not a real refusal --
+		// determines the outcome. RFC 1918 space must not be used here:
+		// cloud CI runners sit inside a 10.0.0.0/8 VNet, so a 10.x target
+		// is routable there and answers with an immediate RST, which
+		// surfaces as ECONNREFUSED rather than a timeout.
+		addr := netip.MustParseAddrPort("192.0.2.1:81")
 		_, err = d.DialUpstream(context.Background(), addr, "svc.example", "")
 		var netErr net.Error
 		if !errors.As(err, &netErr) || !netErr.Timeout() {
