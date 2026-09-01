@@ -509,13 +509,13 @@ func TestDialUpstreamDialAndHandshake(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// A non-routable TEST-NET-1 address (RFC 5737), which is reserved
-		// for documentation and is never routed, so the SYN is blackholed
-		// and the configured DialTimeout -- not a real refusal --
-		// determines the outcome. RFC 1918 space must not be used here:
-		// cloud CI runners sit inside a 10.0.0.0/8 VNet, so a 10.x target
-		// is routable there and answers with an immediate RST, which
-		// surfaces as ECONNREFUSED rather than a timeout.
+		// A non-routable TEST-NET-1 address (RFC 5737), reserved for
+		// documentation and never routed, so the SYN is blackholed and the
+		// configured DialTimeout -- not a real refusal -- determines the
+		// outcome. RFC 1918 space is a poor choice for this: CI runners and
+		// developer machines commonly sit inside 10.0.0.0/8 or
+		// 192.168.0.0/16, where such an address may be routable and answer
+		// with an RST, turning the expected timeout into ECONNREFUSED.
 		addr := netip.MustParseAddrPort("192.0.2.1:81")
 		_, err = d.DialUpstream(context.Background(), addr, "svc.example", "")
 		var netErr net.Error
