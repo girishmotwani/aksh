@@ -1,6 +1,6 @@
-# Aksh — Security Sidecar Proxy for AI Agents
+# Aksh — Security Sidecar Proxy for Kagent
 
-Aksh is a purpose-built **security sidecar proxy for AI agents** on Kubernetes.
+Aksh is a purpose-built **security sidecar proxy for Kagent**.
 It **separates reasoning from authority**: eBPF cgroup hooks transparently
 capture an agent container's outbound traffic and redirect it to a co-located
 proxy, which terminates TLS, evaluates policy, injects brokered credentials only
