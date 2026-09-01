@@ -1,0 +1,57 @@
+# Code owners for aksh.
+#
+# Every pull request targeting a protected branch requires an approving review
+# from at least one of the people listed here. GitHub does not let an author
+# approve their own pull request, so a change written by one owner must be
+# reviewed by one of the others.
+#
+# A code owner's approval only counts if they have write access to the
+# repository. Keep this list in sync with the collaborator list -- an entry for
+# someone without write access is silently ignored, which would weaken the
+# review requirement without any visible error on the pull request.
+
+# Default owners for everything in the repository. Later patterns override
+# earlier ones, so this must stay first for the rules below to take effect.
+*       @girishmotwani @mugeshsp @ritwikranjan
+
+# Security-relevant surfaces are called out explicitly rather than relying on
+# the catch-all above. The owners are identical today, so these lines do not
+# change who may approve; they exist so that narrowing ownership later cannot
+# accidentally leave these paths unowned, and so reviewers can see at a glance
+# which parts of the tree carry enforcement guarantees.
+
+# Policy evaluation and the enforcement decision path.
+/internal/policy/       @girishmotwani @mugeshsp @ritwikranjan
+
+# The AkshPolicy API types. Changes here are a compatibility surface for every
+# cluster that has already applied a policy.
+/api/                   @girishmotwani @mugeshsp @ritwikranjan
+
+# TLS termination, connection capture, and the upstream dialler.
+/internal/dataplane/    @girishmotwani @mugeshsp @ritwikranjan
+
+# eBPF C sources and the generated object. Changes here alter what the kernel
+# executes and are not reviewable from the Go code alone.
+/internal/dataplane/bpf/ @girishmotwani @mugeshsp @ritwikranjan
+
+# Credential brokering and injection.
+/internal/token/        @girishmotwani @mugeshsp @ritwikranjan
+
+# Certificate authority and leaf issuance used to terminate TLS.
+/internal/pki/          @girishmotwani @mugeshsp @ritwikranjan
+
+# The per-request audit record, which is the evidence trail for enforcement.
+/internal/audit/        @girishmotwani @mugeshsp @ritwikranjan
+
+# CI, release automation, and this ownership file itself. Without this line a
+# change to CODEOWNERS or to a workflow would be reviewable under the default
+# rule alone; keeping it explicit makes tampering with the review process
+# visible as a change to an owned path.
+/.github/               @girishmotwani @mugeshsp @ritwikranjan
+
+# Admission webhook and deployment manifests, which control whether the sidecar
+# is injected at all.
+/deploy/                @girishmotwani @mugeshsp @ritwikranjan
+
+# Container build definitions for the published images.
+/build/                 @girishmotwani @mugeshsp @ritwikranjan
