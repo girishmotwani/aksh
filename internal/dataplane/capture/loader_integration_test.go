@@ -137,16 +137,65 @@ func errnoOf(err error) int {
 
 // --- parent-side helpers ---------------------------------------------------
 
-// mountCgroup2 mounts a private cgroup2 hierarchy for one test and returns its
-// path; the programs attach here and the connect probe joins it.
+// mountCgroup2 mounts a cgroup2 hierarchy for one test and returns a freshly
+// created *leaf* cgroup inside it. The programs attach to that leaf and the
+// connect probe joins it.
+//
+// Returning the mount root instead would attach at the root of the host's
+// unified hierarchy: a second cgroup2 mount is another view of the same single
+// hierarchy, not a private one. Every process on the machine would then be in
+// scope, so connect4 would rewrite destinations for processes the test does
+// not control -- including other packages' test binaries, which `go test`
+// runs in parallel with this one. That corrupts this package's own map
+// assertions and breaks unrelated packages. This is issue #82; the same bug
+// was fixed in the bpf package's scratchCgroup and must stay fixed here.
 func mountCgroup2(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	if err := unix.Mount("none", dir, "cgroup2", 0, ""); err != nil {
+	mnt := t.TempDir()
+	if err := unix.Mount("none", mnt, "cgroup2", 0, ""); err != nil {
 		t.Fatalf("mount cgroup2: %v", err)
 	}
-	t.Cleanup(func() { _ = unix.Unmount(dir, 0) })
-	return dir
+	t.Cleanup(func() { _ = unix.Unmount(mnt, 0) })
+
+	// Removal is best-effort: a cgroup can only be removed once empty, and a
+	// leaked probe must not fail an otherwise passing test. The name is unique
+	// per test so a leftover never collides with a later run.
+	leaf := filepath.Join(mnt, "aksh-test-"+strconv.Itoa(os.Getpid())+"-"+sanitizeCgroupName(t.Name()))
+	if err := os.Mkdir(leaf, 0o755); err != nil {
+		t.Fatalf("create leaf cgroup %s: %v", leaf, err)
+	}
+	t.Cleanup(func() { _ = os.Remove(leaf) })
+
+	// Fail loudly rather than silently re-introducing the root-attach bug: a
+	// freshly created leaf cgroup must contain no processes at all.
+	if n := cgroupProcCount(t, leaf); n != 0 {
+		t.Fatalf("new leaf cgroup %s holds %d process(es), want none: attaching "+
+			"here would scope the BPF program to processes this test did not create", leaf, n)
+	}
+	return leaf
+}
+
+// sanitizeCgroupName maps a Go test name to something safe for a directory
+// name; subtest names contain '/' and may contain spaces.
+func sanitizeCgroupName(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
+}
+
+// cgroupProcCount returns the number of PIDs currently in the cgroup at path.
+func cgroupProcCount(t *testing.T, path string) int {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(path, "cgroup.procs"))
+	if err != nil {
+		t.Fatalf("read cgroup.procs in %s: %v", path, err)
+	}
+	return len(strings.Fields(string(raw)))
 }
 
 // mountBPFFS mounts a private bpffs for one test and returns its path; it is the
