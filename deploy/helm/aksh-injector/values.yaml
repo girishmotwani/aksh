@@ -55,3 +55,27 @@ webhook:
   injectLabel:
     key: aksh.dev/inject
     value: enabled
+
+# RBAC for the injected sidecar, in the namespaces whose pods get injected.
+#
+# The sidecar reads AkshPolicy from the API server as the *workload* pod's
+# ServiceAccount, in the workload's own namespace. Without this permission the
+# proxy never gets a policy snapshot and the pod crash-loops on startup.
+#
+# This is disabled by default because it grants permissions in namespaces this
+# chart does not otherwise touch, which should be a deliberate choice. If you
+# leave it off, create the Role and RoleBinding yourself -- see the
+# "Grant the sidecar permission to read policy" section of deploy/README.md.
+workloadRBAC:
+  enabled: false
+  # Namespaces whose pods are injected (i.e. those labelled aksh.dev/inject).
+  # A Role and RoleBinding is rendered in each.
+  namespaces: []
+  # ServiceAccounts, within each namespace above, that injected pods run as.
+  # "default" covers workloads that do not set serviceAccountName. List every
+  # ServiceAccount actually used -- one missing entry means those pods fail to
+  # start, and the sidecar cannot tell you which one is absent.
+  serviceAccounts:
+    - default
+  # Name given to the rendered Role and RoleBinding.
+  roleName: aksh-proxy-policy-reader

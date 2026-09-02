@@ -38,8 +38,8 @@ var (
 		return watch.NewDynamicAkshPolicyClient(dc, namespace)
 	}
 	// newWatcher builds the policy Watcher over the store (#88).
-	newWatcher = func(opts watch.Options, client watch.AkshPolicyClient, store *watch.Store) (policyWatcher, error) {
-		return watch.NewWatcher(opts, client, store)
+	newWatcher = func(opts watch.Options, client watch.AkshPolicyClient, store *watch.Store, metrics watch.Metrics) (policyWatcher, error) {
+		return watch.NewWatcherWithMetrics(opts, client, store, metrics)
 	}
 )
 
@@ -53,7 +53,7 @@ var (
 // logged at ERROR and reported to failClosed exactly once (#91/#93); a
 // context.Canceled on drain is benign (#92). The curried return is assignable to
 // runtime.Options.PolicyStartup (#94).
-func productionPolicyStartup(cfg config.Config, log *slog.Logger, failClosed func(error)) func(context.Context) (*watch.Store, error) {
+func productionPolicyStartup(cfg config.Config, log *slog.Logger, failClosed func(error), metrics watch.Metrics) func(context.Context) (*watch.Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -84,7 +84,7 @@ func productionPolicyStartup(cfg config.Config, log *slog.Logger, failClosed fun
 			PodLabels:    podLabels,
 			MaxStaleness: cfg.Policy.EffectiveMaxStaleness(),
 			ResyncPeriod: cfg.Policy.Resync,
-		}, client, store)
+		}, client, store, metrics)
 		if err != nil {
 			return nil, fmt.Errorf("aksh-proxy: policy startup: watcher: %w", err)
 		}

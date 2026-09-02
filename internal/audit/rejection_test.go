@@ -85,6 +85,8 @@ func (m *rejectionMetrics) AuditUnavailable(bool)                        {}
 func (m *rejectionMetrics) SnapshotAge(time.Duration)                    {}
 func (m *rejectionMetrics) SnapshotVersion(string)                       {}
 func (m *rejectionMetrics) PolicyCompileFailure()                        {}
+func (m *rejectionMetrics) PolicyStaleDeny()                             {}
+func (m *rejectionMetrics) PolicyListForbidden()                         {}
 func (m *rejectionMetrics) CAExpiry(time.Duration)                       {}
 func (m *rejectionMetrics) TokenAcquisition(audit.ProviderID, audit.Result, audit.AcquireErrorClass) {
 }

@@ -186,14 +186,23 @@ type atomicBool struct {
 func (b *atomicBool) set(v bool) { b.mu.Lock(); b.v = v; b.mu.Unlock() }
 func (b *atomicBool) get() bool  { b.mu.Lock(); defer b.mu.Unlock(); return b.v }
 
-// countingStaleDeny counts IncStaleDeny calls for the deny-boundary metric test.
-type countingStaleDeny struct {
-	mu sync.Mutex
-	n  int
+// countingMetrics counts the watcher's policy metric calls. Both counters are
+// tracked separately so a test can assert that a stale-deny transition does not
+// also register as a forbidden list, and vice versa.
+type countingMetrics struct {
+	mu        sync.Mutex
+	n         int
+	forbidden int
 }
 
-func (c *countingStaleDeny) IncStaleDeny() { c.mu.Lock(); c.n++; c.mu.Unlock() }
-func (c *countingStaleDeny) count() int    { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
+func (c *countingMetrics) PolicyStaleDeny()     { c.mu.Lock(); c.n++; c.mu.Unlock() }
+func (c *countingMetrics) PolicyListForbidden() { c.mu.Lock(); c.forbidden++; c.mu.Unlock() }
+func (c *countingMetrics) count() int           { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
+func (c *countingMetrics) forbiddenCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.forbidden
+}
 
 // mustWatcher builds a Watcher and fails the test on validation error.
 func mustWatcher(t *testing.T, opts Options, client AkshPolicyClient, store *Store) *Watcher {

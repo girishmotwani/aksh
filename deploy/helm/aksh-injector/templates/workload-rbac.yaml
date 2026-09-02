@@ -1,0 +1,56 @@
+{{/*
+Opt-in RBAC for the injected aksh-proxy sidecar.
+
+The sidecar has no controller feeding it policy: it watches AkshPolicy in the
+API server itself, authenticating as the *workload* pod's ServiceAccount in the
+workload's own namespace. That permission therefore cannot be granted by a
+single static manifest shipped with this chart -- it depends on namespaces and
+ServiceAccounts that only the operator knows.
+
+Without it the proxy never obtains a snapshot, the first-snapshot gate times
+out, and the sidecar fails to start (the pod crash-loops). Set
+`workloadRBAC.enabled=true` and list the namespaces to have the chart render
+the Role and RoleBinding for you; otherwise create them by hand, as described
+in deploy/README.md.
+*/}}
+{{- if .Values.workloadRBAC.enabled }}
+{{- $root := . }}
+{{- if not .Values.workloadRBAC.namespaces }}
+{{- fail "workloadRBAC.enabled is true but workloadRBAC.namespaces is empty: list the namespaces whose pods are injected, otherwise nothing is granted and the sidecar will fail to start" }}
+{{- end }}
+{{- range $ns := .Values.workloadRBAC.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $root.Values.workloadRBAC.roleName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "aksh-injector.labels" $root | nindent 4 }}
+rules:
+  # Read-only, own-namespace only. The watcher never requests cluster-wide
+  # access; a ClusterRole here would silently widen what a compromised workload
+  # can read on a deny-by-default product.
+  - apiGroups: ["aksh.dev"]
+    resources: ["akshpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $root.Values.workloadRBAC.roleName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "aksh-injector.labels" $root | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $root.Values.workloadRBAC.roleName }}
+subjects:
+  {{- range $sa := $root.Values.workloadRBAC.serviceAccounts }}
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $ns }}
+  {{- end }}
+{{- end }}
+{{- end }}

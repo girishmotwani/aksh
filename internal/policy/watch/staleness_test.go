@@ -12,7 +12,7 @@ func TestWatcherRun_StaleSnapshotMetric_EmittedAtDenyBoundary(t *testing.T) {
 	client := newFakeClient("app-ns")
 	store := &Store{}
 	w := mustWatcher(t, Options{Namespace: "app-ns", MaxStaleness: 45 * time.Second}, client, store)
-	counter := &countingStaleDeny{}
+	counter := &countingMetrics{}
 	w.metrics = counter
 
 	snap := mustSnapshot(t, allowPolicy("a", "example.com"))

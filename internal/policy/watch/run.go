@@ -38,6 +38,7 @@ func (w *Watcher) initialList(ctx context.Context) (string, error) {
 		if err == nil {
 			return rv, nil
 		}
+		w.noteListFailure(phaseInitial, err)
 		if !w.sleep(ctx, w.reconnectBackoff) {
 			return "", ctx.Err()
 		}
@@ -118,6 +119,7 @@ func (w *Watcher) reconnect(ctx context.Context) string {
 		if err == nil {
 			return rv
 		}
+		w.noteListFailure(phaseReconnect, err)
 		if !w.sleep(ctx, backoff) {
 			return ""
 		}
@@ -217,7 +219,7 @@ func (w *Watcher) observeStaleness() {
 	w.mu.Unlock()
 
 	if stale && !prev {
-		w.metrics.IncStaleDeny()
+		w.metrics.PolicyStaleDeny()
 	}
 }
 
@@ -233,6 +235,7 @@ func (w *Watcher) relistAndSwap(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	w.noteListSuccess()
 	w.compileAndSwap(list.Items)
 	return list.ResourceVersion, nil
 }

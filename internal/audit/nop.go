@@ -26,6 +26,8 @@ func (NopMetricsRecorder) AuditUnavailable(bool)                                
 func (NopMetricsRecorder) SnapshotAge(time.Duration)                                {}
 func (NopMetricsRecorder) SnapshotVersion(string)                                   {}
 func (NopMetricsRecorder) PolicyCompileFailure()                                    {}
+func (NopMetricsRecorder) PolicyStaleDeny()                                         {}
+func (NopMetricsRecorder) PolicyListForbidden()                                     {}
 func (NopMetricsRecorder) CAExpiry(time.Duration)                                   {}
 func (NopMetricsRecorder) TokenAcquisition(ProviderID, Result, AcquireErrorClass)   {}
 func (NopMetricsRecorder) TokenAcquisitionDuration(ProviderID, time.Duration)       {}

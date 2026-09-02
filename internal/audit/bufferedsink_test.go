@@ -135,6 +135,8 @@ func (m *bsMetrics) LeafCacheMiss()                                             
 func (m *bsMetrics) SnapshotAge(time.Duration)                                                {}
 func (m *bsMetrics) SnapshotVersion(string)                                                   {}
 func (m *bsMetrics) PolicyCompileFailure()                                                    {}
+func (m *bsMetrics) PolicyStaleDeny()                                                         {}
+func (m *bsMetrics) PolicyListForbidden()                                                     {}
 func (m *bsMetrics) CAExpiry(time.Duration)                                                   {}
 func (m *bsMetrics) TokenAcquisition(ProviderID, Result, AcquireErrorClass)                   {}
 func (m *bsMetrics) TokenAcquisitionDuration(ProviderID, time.Duration)                       {}

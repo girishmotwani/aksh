@@ -74,6 +74,8 @@ func (noopTypedMetrics) AuditUnavailable(bool)                              {}
 func (noopTypedMetrics) SnapshotAge(time.Duration)                          {}
 func (noopTypedMetrics) SnapshotVersion(string)                             {}
 func (noopTypedMetrics) PolicyCompileFailure()                              {}
+func (noopTypedMetrics) PolicyStaleDeny()                                   {}
+func (noopTypedMetrics) PolicyListForbidden()                               {}
 func (noopTypedMetrics) CAExpiry(time.Duration)                             {}
 func (noopTypedMetrics) TokenAcquisition(audit.ProviderID, audit.Result, audit.AcquireErrorClass) {
 }

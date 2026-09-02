@@ -1,0 +1,44 @@
+# RBAC the injected aksh-proxy sidecar needs, per workload namespace.
+#
+# The sidecar has no controller feeding it policy: it watches AkshPolicy in the
+# API server itself, as the WORKLOAD pod's ServiceAccount, in the WORKLOAD's own
+# namespace. Without this the proxy never gets a snapshot and the pod
+# crash-loops. See ../README.md, "Step 3".
+#
+# This file lives in examples/ on purpose: `kubectl apply -f deploy/` is not
+# recursive, so the placeholders below can never be applied by accident.
+#
+# Replace <your-namespace>, and add one subject per ServiceAccount your injected
+# pods actually run as. Then:
+#
+#   kubectl apply -f deploy/examples/workload-rbac.yaml
+#
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aksh-proxy-policy-reader
+  namespace: <your-namespace>
+rules:
+  # Read-only, and namespaced on purpose. The watcher never reads outside its
+  # own namespace; a ClusterRole would let any compromised workload read every
+  # policy in the cluster.
+  - apiGroups: ["aksh.dev"]
+    resources: ["akshpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aksh-proxy-policy-reader
+  namespace: <your-namespace>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aksh-proxy-policy-reader
+subjects:
+  # "default" only covers pods that do not set serviceAccountName. Every
+  # ServiceAccount used by an injected pod needs an entry here -- one missing
+  # entry means exactly those pods fail to start.
+  - kind: ServiceAccount
+    name: default
+    namespace: <your-namespace>
