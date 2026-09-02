@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -52,17 +53,26 @@ type AkshPolicyClient interface {
 	Watch(ctx context.Context, opts metav1.ListOptions) (kwatch.Interface, error)
 }
 
-// staleDenyCounter is the minimal metrics seam for the aksh_policy_stale_deny_total
-// counter. audit.MetricsRecorder has no generic counter, so the watcher takes a
-// focused interface consistent with the codebase's injectable-metrics pattern.
-type staleDenyCounter interface {
-	IncStaleDeny()
+// Metrics is the focused metrics seam the watcher needs. audit.MetricsRecorder
+// satisfies it structurally, so production injects the real recorder and the
+// counters below are live; a test can supply a fake without pulling in the full
+// recorder contract.
+//
+// The method names deliberately match audit.MetricsRecorder. An earlier
+// watch-local interface used a different name, which meant the real recorder
+// could not satisfy it and the counter was silently a no-op in production.
+type Metrics interface {
+	// PolicyStaleDeny counts fresh->stale snapshot transitions.
+	PolicyStaleDeny()
+	// PolicyListForbidden counts policy List calls refused with 403/401.
+	PolicyListForbidden()
 }
 
-// noopStaleDeny is used when no counter is injected.
-type noopStaleDeny struct{}
+// noopMetrics is used when no recorder is injected.
+type noopMetrics struct{}
 
-func (noopStaleDeny) IncStaleDeny() {}
+func (noopMetrics) PolicyStaleDeny()     {}
+func (noopMetrics) PolicyListForbidden() {}
 
 // Watcher keeps a Store current from namespaced AkshPolicy CRD changes.
 type Watcher struct {
@@ -75,7 +85,14 @@ type Watcher struct {
 	now func() time.Time
 	log *slog.Logger
 
-	metrics staleDenyCounter
+	metrics Metrics
+
+	// lastListErr retains the most recent List failure so a first-snapshot
+	// timeout can report the underlying cause instead of a bare context error.
+	lastListErr atomic.Pointer[error]
+	// listFailures counts consecutive List failures, driving both the log rate
+	// limiter and the "attempts" field operators use to judge persistence.
+	listFailures atomic.Uint64
 
 	// reconnectBackoff is the base backoff between failed reconnect attempts.
 	reconnectBackoff time.Duration
@@ -102,9 +119,15 @@ type Watcher struct {
 	fatal atomic.Bool
 }
 
-// NewWatcher validates its inputs and returns a ready-to-Run Watcher. It never
-// mutates store on failure.
+// NewWatcher validates its inputs and returns a ready-to-Run Watcher with no
+// metrics recorder attached. It never mutates store on failure.
 func NewWatcher(opts Options, client AkshPolicyClient, store *Store) (*Watcher, error) {
+	return NewWatcherWithMetrics(opts, client, store, nil)
+}
+
+// NewWatcherWithMetrics is NewWatcher with an explicit metrics recorder, so the
+// policy counters are live in production. A nil recorder selects the no-op.
+func NewWatcherWithMetrics(opts Options, client AkshPolicyClient, store *Store, metrics Metrics) (*Watcher, error) {
 	if opts.Namespace == "" {
 		return nil, ErrEmptyNamespace
 	}
@@ -117,13 +140,16 @@ func NewWatcher(opts Options, client AkshPolicyClient, store *Store) (*Watcher, 
 	if opts.MaxStaleness <= 0 {
 		return nil, ErrInvalidMaxStaleness
 	}
+	if metrics == nil {
+		metrics = noopMetrics{}
+	}
 	return &Watcher{
 		opts:             opts,
 		client:           client,
 		store:            store,
 		now:              time.Now,
 		log:              slog.Default(),
-		metrics:          noopStaleDeny{},
+		metrics:          metrics,
 		reconnectBackoff: 50 * time.Millisecond,
 		ready:            make(chan struct{}),
 	}, nil
@@ -134,12 +160,19 @@ func NewWatcher(opts Options, client AkshPolicyClient, store *Store) (*Watcher, 
 func (w *Watcher) Live() bool { return !w.fatal.Load() }
 
 // WaitFirstSnapshot blocks until the first successful compile+swap, returning nil
-// once ready or the context error if the context is canceled first.
+// once ready. If the context ends first, the returned error wraps the context
+// error so errors.Is still classifies it, and names the most recent List failure
+// when there is one -- otherwise the caller reports only "context deadline
+// exceeded", which points an operator at a timeout when the real cause is
+// usually a missing AkshPolicy read permission.
 func (w *Watcher) WaitFirstSnapshot(ctx context.Context) error {
 	select {
 	case <-w.ready:
 		return nil
 	case <-ctx.Done():
+		if last := w.lastListFailure(); last != nil {
+			return fmt.Errorf("%w (no policy snapshot; last list error: %v)", ctx.Err(), last)
+		}
 		return ctx.Err()
 	}
 }

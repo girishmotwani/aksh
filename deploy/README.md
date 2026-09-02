@@ -41,10 +41,12 @@ helm install aksh deploy/helm/aksh-injector \
   --set proxyImage=ghcr.io/girishmotwani/aksh-proxy:v1.2.3
 ```
 
-That's the whole install. `proxyImage` is the sidecar image stamped into every injected pod; the two
-`injector.image.*` values are the webhook image. Everything else (RBAC, Service, both fail-closed
-webhook configs) is created for you. Upgrade later with `helm upgrade aksh deploy/helm/aksh-injector
-...`; uninstall with `helm uninstall aksh -n aksh-system`. All tunables are in
+That's the whole install of the *injector*. `proxyImage` is the sidecar image stamped into every
+injected pod; the two `injector.image.*` values are the webhook image. The injector's own RBAC,
+Service and both fail-closed webhook configs are created for you. **One thing is not, and cannot be:
+the RBAC the injected sidecar needs in your workload namespaces — see Step 3.** Upgrade later with
+`helm upgrade aksh deploy/helm/aksh-injector ...`; uninstall with `helm uninstall aksh -n
+aksh-system`. All tunables are in
 [`helm/aksh-injector/values.yaml`](helm/aksh-injector/values.yaml).
 
 ### Option B — Raw manifests
@@ -60,6 +62,9 @@ If you'd rather not use Helm, edit two lines then apply:
 kubectl apply -f deploy/          # applies 00..50 in order
 ```
 
+This covers the injector only. You still need Step 3 — `deploy/` deliberately ships no RBAC for the
+sidecar, because it depends on namespaces and ServiceAccounts this repo can't know.
+
 Either way: the `caBundle` fields are intentionally empty — the injector generates its own CA at
 startup and patches them itself. **In production, pin an immutable tag or digest — never `:latest`.**
 
@@ -72,7 +77,74 @@ kubectl -n aksh-system rollout status deploy/aksh-injector
 `Ready` means `/readyz` passed, which is gated on the injector having successfully written its
 `caBundle` into both webhook configurations. **Do not proceed until this is green.**
 
-## Step 3 — Opt a namespace in
+## Step 3 — Grant the sidecar permission to read policy
+
+**Required. Skip this and your injected pods will crash-loop.**
+
+The sidecar is not fed policy by a controller — it watches `AkshPolicy` in the API server itself,
+authenticating as **the workload pod's own ServiceAccount, in the workload's own namespace**. Which
+namespaces and ServiceAccounts those are is something only you know, so no static manifest shipped
+here can grant it for you.
+
+Do this **before** labelling the namespace in Step 4, so the permission is in place by the time the
+first injected pod starts.
+
+### Option A — let the chart render it
+
+```sh
+helm upgrade aksh deploy/helm/aksh-injector --reuse-values \
+  --set workloadRBAC.enabled=true \
+  --set "workloadRBAC.namespaces={team-a,team-b}" \
+  --set "workloadRBAC.serviceAccounts={default,my-app-sa}"
+```
+
+This renders a `Role` + `RoleBinding` in **each** listed namespace, bound to **each** listed
+ServiceAccount. List every ServiceAccount your injected pods actually run as — `default` only covers
+workloads that don't set `serviceAccountName`. It is off by default because it grants permissions in
+namespaces the chart doesn't otherwise touch, which should be a deliberate choice.
+
+### Option B — apply it yourself
+
+Per workload namespace (also in
+[`examples/workload-rbac.yaml`](examples/workload-rbac.yaml)):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aksh-proxy-policy-reader
+  namespace: <your-namespace>
+rules:
+  - apiGroups: ["aksh.dev"]
+    resources: ["akshpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aksh-proxy-policy-reader
+  namespace: <your-namespace>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aksh-proxy-policy-reader
+subjects:
+  - kind: ServiceAccount
+    name: default              # repeat for every SA your injected pods use
+    namespace: <your-namespace>
+```
+
+Keep it a namespaced `Role`, not a `ClusterRole`: the watcher only ever reads its own namespace, and
+a cluster-wide grant would let any compromised workload read every policy in the cluster.
+
+### What it looks like when it's missing
+
+The proxy can't get a policy snapshot, so it **refuses to start** rather than running open or silently
+denying — the pod goes `CrashLoopBackOff`. `kubectl -n <ns> logs <pod> -c aksh-proxy` shows the
+`AkshPolicy list/watch failed` line naming the exact `apiGroups`/`resources`/`verbs` you're missing,
+and `aksh_policy_list_forbidden_total` increments.
+
+## Step 4 — Opt a namespace in
 
 This is the switch that turns protection on for a namespace:
 
@@ -85,7 +157,7 @@ That's it. Any pod **created** in that namespace from now on gets the sidecar au
 > Injection happens on pod **CREATE** only. Pods that already exist are **not** retro-injected —
 > restart the workload (`kubectl -n <ns> rollout restart deploy/<app>`) to get them injected.
 
-## Step 4 — Verify
+## Step 5 — Verify
 
 ```sh
 # Sidecar present?
@@ -119,7 +191,7 @@ a failed create.
 
 Two consequences to keep in mind:
 
-- **Order matters (Step 3 before Step 4).** Before the injector is Ready its `caBundle` is empty; if
+- **Order matters (Step 2 before Step 4).** Before the injector is Ready its `caBundle` is empty; if
   a namespace were already labelled, `failurePolicy: Fail` would block every pod there. Labelling
   *after* Ready avoids that window entirely.
 - **Never label `aksh-system`.** The injector's own namespace must not carry
@@ -142,7 +214,8 @@ offending field so the cause is obvious.
 
 | Symptom | Check |
 |---------|-------|
-| Pods in a labelled ns won't create | Is the injector `Ready` (Step 3)? `kubectl -n aksh-system logs deploy/aksh-injector`. |
+| Pods in a labelled ns won't create | Is the injector `Ready` (Step 2)? `kubectl -n aksh-system logs deploy/aksh-injector`. |
+| Injected pod is `CrashLoopBackOff` | Almost always missing sidecar RBAC (Step 3). `kubectl -n <ns> logs <pod> -c aksh-proxy` — an `AkshPolicy list/watch failed` line naming `akshpolicies` confirms it. |
 | Sidecar not appearing | Is the namespace labelled `aksh.dev/inject=enabled`? Is the pod newly created (not pre-existing)? |
 | Pod rejected with a field name | The validating webhook blocked an inadmissible pod — fix the named field. |
 | `caBundle` empty after minutes | Injector RBAC or startup failure — check its logs; it reconciles the bundle every 5 min. |

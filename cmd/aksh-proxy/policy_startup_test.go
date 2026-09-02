@@ -88,7 +88,7 @@ func TestProductionPolicyStartup_MissingPodLabelsFile_ReturnsErrorNilStore(t *te
 	upstreamSeamsOK(t, fakeAkshClient{})
 	cfg := policyCfgLabels(filepath.Join(t.TempDir(), "absent"), 2*time.Second)
 
-	store, err := productionPolicyStartup(cfg, nil, nil)(context.Background())
+	store, err := productionPolicyStartup(cfg, nil, nil, nil)(context.Background())
 	if err == nil {
 		t.Fatal("productionPolicyStartup() error = nil, want a fail-closed error")
 	}
@@ -104,7 +104,7 @@ func TestProductionPolicyStartup_MalformedPodLabelsFile_ReturnsErrorNilStore(t *
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	store, err := productionPolicyStartup(policyCfgLabels(path, 2*time.Second), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfgLabels(path, 2*time.Second), nil, nil, nil)(context.Background())
 	if err == nil {
 		t.Fatal("productionPolicyStartup() error = nil, want a fail-closed error")
 	}
@@ -119,7 +119,7 @@ func TestProductionPolicyStartup_PodLabels_PassedToWatcherOptions(t *testing.T) 
 	onw := newWatcher
 	t.Cleanup(func() { newWatcher = onw })
 	var got map[string]string
-	newWatcher = func(opts watch.Options, _ watch.AkshPolicyClient, _ *watch.Store) (policyWatcher, error) {
+	newWatcher = func(opts watch.Options, _ watch.AkshPolicyClient, _ *watch.Store, _ watch.Metrics) (policyWatcher, error) {
 		got = opts.PodLabels
 		return &fakePolicyWatcher{}, nil
 	}
@@ -128,7 +128,7 @@ func TestProductionPolicyStartup_PodLabels_PassedToWatcherOptions(t *testing.T) 
 	if err := os.WriteFile(path, []byte("app=\"agent\"\ntier=\"web\"\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := productionPolicyStartup(policyCfgLabels(path, 2*time.Second), nil, nil)(context.Background()); err != nil {
+	if _, err := productionPolicyStartup(policyCfgLabels(path, 2*time.Second), nil, nil, nil)(context.Background()); err != nil {
 		t.Fatalf("productionPolicyStartup() error = %v, want nil", err)
 	}
 	if got["app"] != "agent" || got["tier"] != "web" || len(got) != 2 {
@@ -142,7 +142,7 @@ func TestProductionPolicyStartup_FakeClient_ReturnsPopulatedStore(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, nil)(ctx)
+	store, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, nil, nil)(ctx)
 	if err != nil {
 		t.Fatalf("productionPolicyStartup() error = %v, want nil", err)
 	}
@@ -172,7 +172,7 @@ func TestProductionPolicyStartup_HappyPath_DenyAllUntilFirstSnapshotThenServes(t
 	done := make(chan result, 1)
 	cfg := policyCfg(t, 2*time.Second)
 	go func() {
-		s, e := productionPolicyStartup(cfg, nil, nil)(ctx)
+		s, e := productionPolicyStartup(cfg, nil, nil, nil)(ctx)
 		done <- result{s, e}
 	}()
 
@@ -203,7 +203,7 @@ func TestProductionPolicyStartup_InClusterConfigSeamError_ReturnsErrorNilStore(t
 	t.Cleanup(func() { inClusterConfig = orig })
 	inClusterConfig = func() (*rest.Config, error) { return nil, errors.New("no in-cluster config") }
 
-	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil, nil)(context.Background())
 	assertErrorNilStore(t, store, err)
 }
 
@@ -214,7 +214,7 @@ func TestProductionPolicyStartup_NewDynamicClientSeamError_ReturnsErrorNilStore(
 	inClusterConfig = func() (*rest.Config, error) { return &rest.Config{}, nil }
 	newDynamicClient = func(*rest.Config) (dynamic.Interface, error) { return nil, errors.New("bad dynamic client") }
 
-	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil, nil)(context.Background())
 	assertErrorNilStore(t, store, err)
 }
 
@@ -228,7 +228,7 @@ func TestProductionPolicyStartup_NewAkshPolicyClientSeamError_ReturnsErrorNilSto
 		return nil, errors.New("bad policy client")
 	}
 
-	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil, nil)(context.Background())
 	assertErrorNilStore(t, store, err)
 }
 
@@ -237,11 +237,11 @@ func TestProductionPolicyStartup_NewWatcherSeamError_ReturnsErrorNilStore(t *tes
 	upstreamSeamsOK(t, fakeAkshClient{})
 	onw := newWatcher
 	t.Cleanup(func() { newWatcher = onw })
-	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store) (policyWatcher, error) {
+	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store, watch.Metrics) (policyWatcher, error) {
 		return nil, errors.New("bad watcher")
 	}
 
-	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, time.Second), nil, nil, nil)(context.Background())
 	assertErrorNilStore(t, store, err)
 }
 
@@ -254,7 +254,7 @@ func TestProductionPolicyStartup_WaitFirstSnapshotTimeout_ReturnsErrorNeverStore
 	}}
 	upstreamSeamsOK(t, client)
 
-	store, err := productionPolicyStartup(policyCfg(t, 50*time.Millisecond), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, 50*time.Millisecond), nil, nil, nil)(context.Background())
 	assertErrorNilStore(t, store, err)
 }
 
@@ -265,7 +265,7 @@ func TestProductionPolicyStartup_WaitFirstSnapshotTimeout_PreservesDenyAll(t *te
 	}}
 	upstreamSeamsOK(t, client)
 
-	store, err := productionPolicyStartup(policyCfg(t, 50*time.Millisecond), nil, nil)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, 50*time.Millisecond), nil, nil, nil)(context.Background())
 	if err == nil {
 		t.Fatalf("productionPolicyStartup() error = nil, want a timeout error")
 	}
@@ -279,14 +279,14 @@ func TestProductionPolicyStartup_RunNonContextError_LogsErrorAndInvokesFailClose
 	upstreamSeamsOK(t, fakeAkshClient{})
 	onw := newWatcher
 	t.Cleanup(func() { newWatcher = onw })
-	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store) (policyWatcher, error) {
+	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store, watch.Metrics) (policyWatcher, error) {
 		return &fakePolicyWatcher{runErr: errors.New("watcher exploded")}, nil
 	}
 
 	fired := make(chan error, 1)
 	failClosed := func(e error) { fired <- e }
 
-	store, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, failClosed)(context.Background())
+	store, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, failClosed, nil)(context.Background())
 	if err != nil || store == nil {
 		t.Fatalf("productionPolicyStartup() = (%v, %v), want a store and nil error (WaitFirstSnapshot succeeded)", store, err)
 	}
@@ -302,14 +302,14 @@ func TestProductionPolicyStartup_RunContextCanceledOnDrain_NoFailClosed(t *testi
 	upstreamSeamsOK(t, fakeAkshClient{})
 	onw := newWatcher
 	t.Cleanup(func() { newWatcher = onw })
-	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store) (policyWatcher, error) {
+	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store, watch.Metrics) (policyWatcher, error) {
 		return &fakePolicyWatcher{runErr: context.Canceled}, nil
 	}
 
 	fired := make(chan error, 1)
 	failClosed := func(e error) { fired <- e }
 
-	if _, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, failClosed)(context.Background()); err != nil {
+	if _, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, failClosed, nil)(context.Background()); err != nil {
 		t.Fatalf("productionPolicyStartup() error = %v, want nil", err)
 	}
 	select {
@@ -324,7 +324,7 @@ func TestProductionPolicyStartup_FailClosedCallback_InvokedExactlyOnceOnRunError
 	upstreamSeamsOK(t, fakeAkshClient{})
 	onw := newWatcher
 	t.Cleanup(func() { newWatcher = onw })
-	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store) (policyWatcher, error) {
+	newWatcher = func(watch.Options, watch.AkshPolicyClient, *watch.Store, watch.Metrics) (policyWatcher, error) {
 		return &fakePolicyWatcher{runErr: errors.New("fatal")}, nil
 	}
 
@@ -332,7 +332,7 @@ func TestProductionPolicyStartup_FailClosedCallback_InvokedExactlyOnceOnRunError
 	count := 0
 	failClosed := func(error) { mu.Lock(); count++; mu.Unlock() }
 
-	if _, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, failClosed)(context.Background()); err != nil {
+	if _, err := productionPolicyStartup(policyCfg(t, 2*time.Second), nil, failClosed, nil)(context.Background()); err != nil {
 		t.Fatalf("productionPolicyStartup() error = %v, want nil", err)
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -346,7 +346,7 @@ func TestProductionPolicyStartup_FailClosedCallback_InvokedExactlyOnceOnRunError
 
 // #94
 func TestProductionPolicyStartup_CurriedReturn_AssignableToOrchestratorPolicyStartupSeam(t *testing.T) {
-	var seam func(context.Context) (*watch.Store, error) = productionPolicyStartup(config.Config{}, nil, nil)
+	var seam func(context.Context) (*watch.Store, error) = productionPolicyStartup(config.Config{}, nil, nil, nil)
 	if seam == nil {
 		t.Fatalf("curried return is nil")
 	}

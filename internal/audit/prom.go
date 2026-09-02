@@ -25,6 +25,8 @@ type PromMetricsRecorder struct {
 	snapshotAge           prometheus.Gauge
 	snapshotVersion       *prometheus.GaugeVec
 	policyCompileFailures prometheus.Counter
+	policyStaleDeny       prometheus.Counter
+	policyListForbidden   prometheus.Counter
 	transportReject       *prometheus.CounterVec
 	leafCacheHits         prometheus.Counter
 	leafCacheMisses       prometheus.Counter
@@ -85,6 +87,14 @@ func NewPromMetricsRecorder(reg prometheus.Registerer) (*PromMetricsRecorder, er
 		policyCompileFailures: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "aksh_policy_compile_failures_total",
 			Help: "Total policy compilation failures.",
+		}),
+		policyStaleDeny: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "aksh_policy_stale_deny_total",
+			Help: "Total transitions of the policy snapshot from fresh to stale, each of which puts the request path into deny-all.",
+		}),
+		policyListForbidden: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "aksh_policy_list_forbidden_total",
+			Help: "Total policy List calls rejected by the API server with 403/401, indicating the pod's ServiceAccount cannot read AkshPolicy.",
 		}),
 		transportReject: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "aksh_transport_reject_total",
@@ -191,6 +201,8 @@ func NewPromMetricsRecorder(reg prometheus.Registerer) (*PromMetricsRecorder, er
 		p.snapshotAge,
 		p.snapshotVersion,
 		p.policyCompileFailures,
+		p.policyStaleDeny,
+		p.policyListForbidden,
 		p.transportReject,
 		p.leafCacheHits,
 		p.leafCacheMisses,
@@ -324,6 +336,12 @@ func sanitiseVersionLabel(v string) string {
 
 // PolicyCompileFailure increments aksh_policy_compile_failures_total.
 func (p *PromMetricsRecorder) PolicyCompileFailure() { p.policyCompileFailures.Inc() }
+
+// PolicyStaleDeny increments aksh_policy_stale_deny_total.
+func (p *PromMetricsRecorder) PolicyStaleDeny() { p.policyStaleDeny.Inc() }
+
+// PolicyListForbidden increments aksh_policy_list_forbidden_total.
+func (p *PromMetricsRecorder) PolicyListForbidden() { p.policyListForbidden.Inc() }
 
 // CAExpiry sets aksh_ca_expiry_seconds.
 func (p *PromMetricsRecorder) CAExpiry(d time.Duration) { p.caExpiry.Set(d.Seconds()) }

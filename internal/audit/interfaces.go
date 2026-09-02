@@ -59,6 +59,14 @@ type MetricsRecorder interface {
 	SnapshotVersion(version string)
 	// PolicyCompileFailure increments aksh_policy_compile_failures_total.
 	PolicyCompileFailure()
+	// PolicyStaleDeny increments aksh_policy_stale_deny_total, once per
+	// fresh->stale transition of the policy snapshot.
+	PolicyStaleDeny()
+	// PolicyListForbidden increments aksh_policy_list_forbidden_total when the
+	// API server rejects a policy List with 403/401. It is the signal that the
+	// pod's ServiceAccount lacks the AkshPolicy read permission, which prevents
+	// the proxy from ever obtaining a snapshot.
+	PolicyListForbidden()
 	// CAExpiry sets aksh_ca_expiry_seconds.
 	CAExpiry(d time.Duration)
 

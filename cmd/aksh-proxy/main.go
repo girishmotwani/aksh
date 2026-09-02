@@ -84,7 +84,7 @@ type deps struct {
 	newPreflight func(h captureHandle) func(context.Context) error
 	// newPolicyStartup builds the policy first-snapshot gate. Default = benign
 	// empty store. Production = productionPolicyStartup.
-	newPolicyStartup func(cfg config.Config, log *slog.Logger, failClosed func(error)) func(context.Context) (*watch.Store, error)
+	newPolicyStartup func(cfg config.Config, log *slog.Logger, failClosed func(error), metrics watch.Metrics) func(context.Context) (*watch.Store, error)
 
 	caProvider    func(context.Context) (pki.CAProvider, error)
 	localSelfTest func(context.Context) error
@@ -280,7 +280,7 @@ func run(ctx context.Context, d deps) int {
 		ListenerFactory:  factory,
 		Preflight:        d.newPreflight(handle),
 		CAProvider:       d.caProvider,
-		PolicyStartup:    d.newPolicyStartup(cfg, log, failClosed),
+		PolicyStartup:    d.newPolicyStartup(cfg, log, failClosed, d.metrics),
 		LocalSelfTest:    d.localSelfTest,
 		AuditSinkFactory: d.auditSink,
 		PrivDrop:         d.privDrop,
@@ -367,7 +367,7 @@ func withDefaults(d deps) deps {
 		}
 	}
 	if d.newPolicyStartup == nil {
-		d.newPolicyStartup = func(config.Config, *slog.Logger, func(error)) func(context.Context) (*watch.Store, error) {
+		d.newPolicyStartup = func(config.Config, *slog.Logger, func(error), watch.Metrics) func(context.Context) (*watch.Store, error) {
 			return func(context.Context) (*watch.Store, error) { return &watch.Store{}, nil }
 		}
 	}

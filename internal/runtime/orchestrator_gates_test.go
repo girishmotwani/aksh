@@ -148,6 +148,8 @@ func (m *recordingMetrics) AuditUnavailable(bool)                        {}
 func (m *recordingMetrics) SnapshotAge(time.Duration)                    {}
 func (m *recordingMetrics) SnapshotVersion(string)                       {}
 func (m *recordingMetrics) PolicyCompileFailure()                        {}
+func (m *recordingMetrics) PolicyStaleDeny()                             {}
+func (m *recordingMetrics) PolicyListForbidden()                         {}
 func (m *recordingMetrics) CAExpiry(time.Duration)                       {}
 func (m *recordingMetrics) TokenAcquisition(audit.ProviderID, audit.Result, audit.AcquireErrorClass) {
 }
