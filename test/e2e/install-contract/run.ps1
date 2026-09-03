@@ -57,7 +57,7 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $false
 
 $here = $PSScriptRoot
-$repo = (Resolve-Path "$PSScriptRoot\..\..\..").Path
+$repo = (Resolve-Path "$PSScriptRoot/../../..").Path
 $ns   = "aksh-install"
 
 $script:Failures = New-Object System.Collections.Generic.List[string]
@@ -89,7 +89,7 @@ function Assert-InstallContractIsolation {
     @{ Pattern = 'kind:\s*(Mutating|Validating)WebhookConfiguration'; What = 'a webhook configuration' }
   )
   $bad = @()
-  foreach ($f in (Get-ChildItem "$here\manifests" -Filter *.yaml -File)) {
+  foreach ($f in (Get-ChildItem "$here/manifests" -Filter *.yaml -File)) {
     $text = Get-Content $f.FullName -Raw
     foreach ($rule in $forbidden) {
       # Skip the comment lines that explain the rule itself.
@@ -121,8 +121,8 @@ try {
   Step "Building and loading images (proxy + injector)"
   # The shipped manifests default to aksh-injector:latest / aksh-proxy:latest,
   # so on kind no image edits are needed and Option B applies verbatim.
-  Invoke-Native "docker build proxy"    { docker build -f "$repo\build\proxy.Dockerfile" -t aksh-proxy:latest $repo }
-  Invoke-Native "docker build injector" { docker build -f "$repo\build\injector.Dockerfile" -t aksh-injector:latest $repo }
+  Invoke-Native "docker build proxy"    { docker build -f "$repo/build/proxy.Dockerfile" -t aksh-proxy:latest $repo }
+  Invoke-Native "docker build injector" { docker build -f "$repo/build/injector.Dockerfile" -t aksh-injector:latest $repo }
   Invoke-Native "kind load proxy"       { kind load docker-image aksh-proxy:latest --name $Cluster }
   Invoke-Native "kind load injector"    { kind load docker-image aksh-injector:latest --name $Cluster }
 
@@ -133,7 +133,7 @@ try {
   # Note this also asserts that deploy/examples/ cannot break a directory apply:
   # it holds placeholder manifests (<your-namespace>) that would be rejected by
   # the API server, and is only safe because `kubectl apply -f` is not recursive.
-  Invoke-Native "kubectl apply -f deploy/" { kubectl apply -f "$repo\deploy" }
+  Invoke-Native "kubectl apply -f deploy/" { kubectl apply -f "$repo/deploy" }
 
   Step "Asserting the AkshPolicy CRD was shipped by deploy/, not by a fixture"
   Invoke-Native "wait CRD Established" {
@@ -152,10 +152,10 @@ try {
   Check ($valCA.Length -gt 0) "validating webhook caBundle populated (len=$($valCA.Length))"
 
   Step "Applying the operator's own namespace and workload fixtures"
-  Invoke-Native "apply workload fixtures" { kubectl apply -f "$here\manifests\00-workload.yaml" }
+  Invoke-Native "apply workload fixtures" { kubectl apply -f "$here/manifests/00-workload.yaml" }
 
   Step "Creating an AkshPolicy (proves the shipped CRD is usable)"
-  $polOut = (kubectl apply -f "$here\manifests\10-policy.yaml" 2>&1 | Out-String)
+  $polOut = (kubectl apply -f "$here/manifests/10-policy.yaml" 2>&1 | Out-String)
   Check ($LASTEXITCODE -eq 0) "AkshPolicy applied against the shipped CRD"
   if ($LASTEXITCODE -ne 0) { Write-Host "  $($polOut.Trim())" -ForegroundColor DarkGray }
 
@@ -165,10 +165,10 @@ try {
   # is the whole point.
   # ------------------------------------------------------------------------
   Step "Granting sidecar RBAC from the shipped example (deploy/README.md Step 3)"
-  $example = "$repo\deploy\examples\workload-rbac.yaml"
+  $example = "$repo/deploy/examples/workload-rbac.yaml"
   Check (Test-Path $example) "deploy/examples/workload-rbac.yaml is shipped"
   $rbac = (Get-Content $example -Raw).Replace('<your-namespace>', $ns)
-  $rbacFile = "$env:TEMP\aksh-install-contract-rbac.yaml"
+  $rbacFile = (Join-Path ([IO.Path]::GetTempPath()) "aksh-install-contract-rbac.yaml")
   [IO.File]::WriteAllText($rbacFile, $rbac)
   Invoke-Native "apply workload RBAC" { kubectl apply -f $rbacFile }
 
@@ -177,7 +177,7 @@ try {
 
   Step "Creating a plain pod and asserting it is injected and becomes Ready"
   kubectl -n $ns delete pod install-target --ignore-not-found | Out-Null
-  Invoke-Native "create install-target" { kubectl -n $ns apply -f "$here\manifests\00-workload.yaml" }
+  Invoke-Native "create install-target" { kubectl -n $ns apply -f "$here/manifests/00-workload.yaml" }
   $c0    = "$(kubectl -n $ns get pod install-target -o jsonpath='{.spec.containers[0].name}')"
   $ann   = "$(kubectl -n $ns get pod install-target -o jsonpath='{.metadata.annotations.aksh\.dev/injected}')"
   Check ($c0 -eq 'aksh')  "sidecar was injected by the webhook (first container '$c0')"
@@ -199,7 +199,7 @@ try {
       kubectl -n $ns delete rolebinding aksh-proxy-policy-reader --ignore-not-found
     }
     kubectl -n $ns delete pod install-target --ignore-not-found --now | Out-Null
-    Invoke-Native "recreate install-target" { kubectl -n $ns apply -f "$here\manifests\00-workload.yaml" }
+    Invoke-Native "recreate install-target" { kubectl -n $ns apply -f "$here/manifests/00-workload.yaml" }
 
     # The proxy's first-snapshot gate defaults to 30s; allow generously more than
     # that, then assert it did NOT come up. A pod that goes Ready here would mean
