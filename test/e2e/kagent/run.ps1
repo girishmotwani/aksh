@@ -215,7 +215,7 @@ try {
   Invoke-Native "genca" {
     docker run --rm -v "${here}/certs:/out" -w /out -e OUT_DIR=/out golang:1.26-bookworm sh -c "go run genca.go"
   }
-  Invoke-Native "apply AkshPolicy CRD" { kubectl --context $ctx apply -f "$repo\test\e2e\manifests\10-crd.yaml" }
+  Invoke-Native "apply AkshPolicy CRD" { kubectl --context $ctx apply -f "$repo\deploy\05-crd.yaml" }
   kubectl --context $ctx -n $ns create secret generic aksh-pod-ca `
     --from-file=ca-cert.pem="$here\certs\ca-cert.pem" `
     --from-file=ca-key.pem="$here\certs\ca-key.pem" `

@@ -185,8 +185,11 @@ if ($ReportOnly) { Write-Evidence-Snapshot; return }
 # --------------------------------------------------------------------------
 # Phase 4 - deploy workloads
 # --------------------------------------------------------------------------
-Step "Applying base manifests (namespace, CRD, RBAC, policy)"
-foreach ($m in "00-namespace","10-crd","20-rbac","30-policy") {
+Step "Applying the shipped AkshPolicy CRD (deploy/05-crd.yaml)"
+Native "apply CRD" { kubectl apply -f (Join-Path $repo "deploy\05-crd.yaml") }
+
+Step "Applying base manifests (namespace, RBAC, policy)"
+foreach ($m in "00-namespace","20-rbac","30-policy") {
   Native "apply $m" { kubectl apply -f (Join-Path $repo "test\e2e\manifests\$m.yaml") }
 }
 

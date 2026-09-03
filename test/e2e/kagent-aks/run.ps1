@@ -282,7 +282,7 @@ try {
     docker run --rm -v "${kagent}/certs:/src:ro" -v "${certDir}:/out" -w /gen -e OUT_DIR=/out `
       golang:1.26-bookworm sh -c "mkdir -p /gen && cp /src/genca.go /gen/ && cd /gen && go run genca.go"
   }
-  Invoke-Native "apply AkshPolicy CRD" { kubectl apply -f "$repo\test\e2e\manifests\10-crd.yaml" }
+  Invoke-Native "apply AkshPolicy CRD" { kubectl apply -f "$repo\deploy\05-crd.yaml" }
   kubectl -n $ns create secret generic aksh-pod-ca `
     --from-file=ca-cert.pem="$certDir\ca-cert.pem" `
     --from-file=ca-key.pem="$certDir\ca-key.pem" `

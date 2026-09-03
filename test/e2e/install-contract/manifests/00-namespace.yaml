@@ -1,0 +1,11 @@
+# Workload fixtures for the install-contract harness.
+#
+# IMPORTANT: this file may contain ONLY things an operator writes themselves --
+# their namespace, their pod, their policy. It must never contain aksh install
+# artifacts (the CRD, the sidecar's Role/RoleBinding, the webhook configs).
+# Those must come from deploy/, which is the entire point of this harness.
+# run.ps1 asserts this mechanically before installing anything.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aksh-install

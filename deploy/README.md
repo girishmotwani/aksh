@@ -43,11 +43,24 @@ helm install aksh deploy/helm/aksh-injector \
 
 That's the whole install of the *injector*. `proxyImage` is the sidecar image stamped into every
 injected pod; the two `injector.image.*` values are the webhook image. The injector's own RBAC,
-Service and both fail-closed webhook configs are created for you. **One thing is not, and cannot be:
-the RBAC the injected sidecar needs in your workload namespaces — see Step 3.** Upgrade later with
-`helm upgrade aksh deploy/helm/aksh-injector ...`; uninstall with `helm uninstall aksh -n
-aksh-system`. All tunables are in
+Service, both fail-closed webhook configs **and the `AkshPolicy` CRD** are created for you. **One
+thing is not, and cannot be: the RBAC the injected sidecar needs in your workload namespaces — see
+Step 3.** Upgrade later with `helm upgrade aksh deploy/helm/aksh-injector ...`; uninstall with
+`helm uninstall aksh -n aksh-system`. All tunables are in
 [`helm/aksh-injector/values.yaml`](helm/aksh-injector/values.yaml).
+
+> **Two things to know about the CRD.**
+>
+> **On upgrade:** Helm installs everything under `crds/` on first install but **never upgrades or
+> deletes it**. If a release changes the `AkshPolicy` schema, apply it yourself:
+> `kubectl apply -f deploy/05-crd.yaml`. That trade is deliberate — templating the CRD instead would
+> make `helm uninstall` delete it and, with it, **every `AkshPolicy` in the cluster**, silently
+> removing egress policy from every protected workload. (`helm uninstall` leaving the CRD behind is
+> the safe failure mode; remove it by hand if you really mean to.)
+>
+> **If you render rather than install** (`helm template`, or a GitOps tool that does), pass
+> **`--include-crds`** — `helm template` omits `crds/` by default, so without it you ship no CRD and
+> every `kubectl apply` of an `AkshPolicy` fails with `no matches for kind "AkshPolicy"`.
 
 ### Option B — Raw manifests
 
@@ -59,11 +72,12 @@ If you'd rather not use Helm, edit two lines then apply:
   pullable on your nodes.
 
 ```sh
-kubectl apply -f deploy/          # applies 00..50 in order
+kubectl apply -f deploy/          # applies 00..50 in order, CRD (05) first
 ```
 
-This covers the injector only. You still need Step 3 — `deploy/` deliberately ships no RBAC for the
-sidecar, because it depends on namespaces and ServiceAccounts this repo can't know.
+This covers the injector and the `AkshPolicy` CRD. You still need Step 3 — `deploy/` deliberately
+ships no RBAC for the sidecar, because it depends on namespaces and ServiceAccounts this repo can't
+know.
 
 Either way: the `caBundle` fields are intentionally empty — the injector generates its own CA at
 startup and patches them itself. **In production, pin an immutable tag or digest — never `:latest`.**
@@ -216,6 +230,8 @@ offending field so the cause is obvious.
 |---------|-------|
 | Pods in a labelled ns won't create | Is the injector `Ready` (Step 2)? `kubectl -n aksh-system logs deploy/aksh-injector`. |
 | Injected pod is `CrashLoopBackOff` | Almost always missing sidecar RBAC (Step 3). `kubectl -n <ns> logs <pod> -c aksh-proxy` — an `AkshPolicy list/watch failed` line naming `akshpolicies` confirms it. |
+| `no matches for kind "AkshPolicy"` | The CRD isn't installed. `kubectl get crd akshpolicies.aksh.dev`; if absent, `kubectl apply -f deploy/05-crd.yaml`. Most often caused by rendering the chart with `helm template` **without** `--include-crds`. |
+| Policy edits have no effect after an upgrade | Helm never upgrades CRDs. If the release changed the schema, `kubectl apply -f deploy/05-crd.yaml`. |
 | Sidecar not appearing | Is the namespace labelled `aksh.dev/inject=enabled`? Is the pod newly created (not pre-existing)? |
 | Pod rejected with a field name | The validating webhook blocked an inadmissible pod — fix the named field. |
 | `caBundle` empty after minutes | Injector RBAC or startup failure — check its logs; it reconciles the bundle every 5 min. |

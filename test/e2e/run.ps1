@@ -111,10 +111,15 @@ try {
   # (aksh-injector:latest, aksh-proxy:latest), so no --set overrides are needed.
   # Render with the pinned alpine/helm image (no host helm required) and apply,
   # so this run also gates the chart templating + values wiring.
+  #
+  # --include-crds is required: `helm install` installs everything under crds/
+  # automatically, but `helm template` omits it unless asked. Without the flag
+  # this render-and-apply path silently ships no AkshPolicy CRD and every policy
+  # apply below fails with `no matches for kind "AkshPolicy"`.
   $rendered = "$env:TEMP\aksh-injector-helm.yaml"
   Invoke-Native "helm template aksh-injector" {
     docker run --rm -v "${repo}:/src" -w /src alpine/helm:latest `
-      template aksh deploy/helm/aksh-injector > $rendered
+      template aksh deploy/helm/aksh-injector --include-crds > $rendered
   }
   Invoke-Native "kubectl apply injector (helm-rendered)" { kubectl apply -f $rendered }
   Invoke-Native "rollout status aksh-injector" { kubectl -n aksh-system rollout status deploy/aksh-injector --timeout=120s }
@@ -169,8 +174,16 @@ try {
   kubectl -n default delete pod inject-target --ignore-not-found | Out-Null
   kubectl -n aksh-inject delete pod inject-target,tamper-target --ignore-not-found | Out-Null
 
+  Step "Asserting the chart shipped the AkshPolicy CRD (no fixture copy exists)"
+  # The CRD arrives via the chart's crds/ directory above, not from a fixture in
+  # this directory. If someone reintroduces a local copy to make a red run green,
+  # the install-contract harness fails -- see test/e2e/install-contract.
+  Invoke-Native "wait for CRD established" {
+    kubectl wait --for=condition=Established crd/akshpolicies.aksh.dev --timeout=60s
+  }
+
   Step "Applying manifests 00..40"
-  foreach ($m in "00-namespace","10-crd","20-rbac","30-policy","40-targets") {
+  foreach ($m in "00-namespace","20-rbac","30-policy","40-targets") {
     Invoke-Native "kubectl apply $m" { kubectl apply -f "$repo\test\e2e\manifests\$m.yaml" }
   }
 

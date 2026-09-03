@@ -1,0 +1,119 @@
+name: Install contract
+
+# Runs only when the shipped install surface changes. The question this workflow
+# answers -- "does what we ship actually deploy?" -- can only regress when
+# deploy/, the chart, the images, or the harness itself change, and the run costs
+# a full kind cluster, so gating it on those paths keeps unrelated PRs fast.
+#
+# Deliberately NOT in the required-checks list on main: a required check that is
+# skipped by a paths filter leaves PRs permanently pending. Treat a red run here
+# as blocking by convention, not by branch protection.
+on:
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - 'test/e2e/install-contract/**'
+      - 'build/**'
+      - '.github/workflows/install-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'test/e2e/install-contract/**'
+      - 'build/**'
+      - '.github/workflows/install-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-contract-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  crd-drift:
+    name: shipped CRD copies are identical
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Helm cannot template anything under crds/, so the CRD has to exist twice:
+      # once for the raw-manifest path and once for the chart. Two copies drift.
+      # This makes the drift loud and immediate instead of surfacing as a cluster
+      # that validates policies against a stale schema.
+      - name: diff deploy/05-crd.yaml against the chart copy
+        run: |
+          if ! diff -u deploy/05-crd.yaml deploy/helm/aksh-injector/crds/akshpolicy.yaml; then
+            echo "::error::The two shipped copies of the AkshPolicy CRD differ."
+            echo "They must be byte-identical. Copy one over the other:"
+            echo "  cp deploy/05-crd.yaml deploy/helm/aksh-injector/crds/akshpolicy.yaml"
+            exit 1
+          fi
+          echo "both copies of the AkshPolicy CRD are identical"
+
+  chart-renders:
+    name: chart lints and renders the CRD
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint deploy/helm/aksh-injector
+
+      # `helm template` omits crds/ unless asked. Operators who render rather
+      # than install (GitOps) hit this, so assert both halves of the documented
+      # behaviour rather than trusting the flag name.
+      - name: CRD is emitted with --include-crds and omitted without it
+        run: |
+          with="$(helm template aksh deploy/helm/aksh-injector --include-crds)"
+          without="$(helm template aksh deploy/helm/aksh-injector)"
+          echo "$with" | grep -q 'name: akshpolicies.aksh.dev' \
+            || { echo "::error::--include-crds did not emit the AkshPolicy CRD"; exit 1; }
+          if echo "$without" | grep -q 'kind: CustomResourceDefinition'; then
+            echo "::error::CRD leaked into a plain template render; is it under templates/ by mistake?"
+            exit 1
+          fi
+          echo "CRD rendering behaves as deploy/README.md documents"
+
+      # The opt-in workload RBAC must render per namespace, stay off by default,
+      # and refuse to render nothing when enabled with no namespaces -- a silent
+      # no-op there would reproduce the bug this chart change exists to fix (#2).
+      - name: workload RBAC renders only when asked
+        run: |
+          if helm template aksh deploy/helm/aksh-injector | grep -q 'aksh-proxy-policy-reader'; then
+            echo "::error::workload RBAC rendered while disabled"
+            exit 1
+          fi
+          out="$(helm template aksh deploy/helm/aksh-injector \
+                  --set workloadRBAC.enabled=true \
+                  --set 'workloadRBAC.namespaces={team-a,team-b}')"
+          echo "$out" | grep -q 'namespace: team-a' || { echo "::error::no Role in team-a"; exit 1; }
+          echo "$out" | grep -q 'namespace: team-b' || { echo "::error::no Role in team-b"; exit 1; }
+          if helm template aksh deploy/helm/aksh-injector --set workloadRBAC.enabled=true >/dev/null 2>&1; then
+            echo "::error::enabling workloadRBAC with no namespaces silently rendered nothing"
+            exit 1
+          fi
+          echo "workload RBAC opt-in behaves as documented"
+
+  install-contract:
+    name: deploy/ installs on a clean cluster
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kind
+        # The harness creates and destroys its own cluster, so only the binary
+        # is needed here.
+        run: |
+          curl -fsSL -o ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+          kubectl version --client
+
+      - name: Run the install-contract harness
+        shell: pwsh
+        run: ./test/e2e/install-contract/run.ps1

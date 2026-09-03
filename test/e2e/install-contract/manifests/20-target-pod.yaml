@@ -1,0 +1,16 @@
+# A completely plain pod. No sidecar, no volumes, no securityContext -- exactly
+# what an operator would already have running. The mutating webhook is expected
+# to turn this into a protected pod on its own.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: install-target
+  namespace: aksh-install
+  labels: { app: install-target }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: aksh-proxy:latest
+      imagePullPolicy: Never
+      command: ["/bin/sh", "-c", "sleep 3600"]
