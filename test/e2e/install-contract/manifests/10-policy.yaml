@@ -1,0 +1,20 @@
+# A minimal AkshPolicy. Applying this at all is one of the assertions: it only
+# succeeds if the CRD shipped in deploy/ is installed and established, which is
+# precisely what was missing before this harness existed.
+#
+# The rule content is deliberately uninteresting -- allow/deny enforcement
+# behaviour is covered by test/e2e/run.ps1. This harness is about whether what
+# we ship deploys, not about what the data plane does once it has.
+apiVersion: aksh.dev/v1alpha1
+kind: AkshPolicy
+metadata:
+  name: install-contract
+  namespace: aksh-install
+spec:
+  egress:
+    rules:
+      - name: allow-example
+        to:
+          host: allowed.test
+        allowPlaintext: true
+        effect: Allow

@@ -48,9 +48,15 @@ test/e2e/
   Dockerfile              production proxy image + file caps (setcap) for non-root eBPF
   echo/                   http/1.1-only HTTPS upstream (the allowed destination)
   certs/gencert.go        generates throwaway CA + allowed.test leaf (gitignored output)
-  manifests/00..50        namespace, CRD, RBAC, policy, echo target, aksh pod
+  manifests/00..61        namespace, RBAC, policy, echo target, aksh pod, injection targets
   run.ps1                 one-shot driver: build -> load -> apply -> drive -> capture
+  install-contract/       proves deploy/ installs on its own, using no fixtures from here
 ```
+
+The `AkshPolicy` CRD is **not** in `manifests/`. It is a shipped artifact
+(`deploy/05-crd.yaml`, and the chart's `crds/`), and this harness installs it from the chart like an
+operator would. Keeping a copy here is what hid the fact that `deploy/` shipped none — see
+[`install-contract/README.md`](install-contract/README.md).
 
 ## Why the harness is shaped this way (TSG)
 
