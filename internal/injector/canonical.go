@@ -93,7 +93,7 @@ func volumeSourceEquivalent(got, want corev1.VolumeSource) bool {
 		// Items carry the security-relevant content (which pod fields are
 		// exposed and at what path); defaultMode is defaulted by the API server
 		// after the mutating webhook returns and must not be compared.
-		return got.DownwardAPI != nil && reflect.DeepEqual(got.DownwardAPI.Items, want.DownwardAPI.Items)
+		return got.DownwardAPI != nil && downwardAPIItemsEquivalent(got.DownwardAPI.Items, want.DownwardAPI.Items)
 	default:
 		return reflect.DeepEqual(got, want)
 	}
@@ -111,6 +111,34 @@ func hostPathTypeEquivalent(got, want *corev1.HostPathType) bool {
 		return *t
 	}
 	return norm(got) == norm(want)
+}
+
+// downwardAPIItemsEquivalent compares downwardAPI items while tolerating the one
+// field the API server stamps in after the mutating webhook returns:
+// SetDefaults_ObjectFieldSelector sets fieldRef.apiVersion to "v1" when it is
+// empty. The canonical volume omits it, so a direct DeepEqual can never match on
+// a real cluster -- with a fail-closed validating webhook that rejected every
+// injected pod in an opted-in namespace.
+//
+// Only the empty -> "v1" defaulting is absorbed. An explicit, different
+// apiVersion is still drift: the security-relevant content of a downwardAPI item
+// is which pod field is exposed and at what path, and that is compared exactly.
+func downwardAPIItemsEquivalent(got, want []corev1.DownwardAPIVolumeFile) bool {
+	normalise := func(items []corev1.DownwardAPIVolumeFile) []corev1.DownwardAPIVolumeFile {
+		out := make([]corev1.DownwardAPIVolumeFile, len(items))
+		for i, it := range items {
+			if it.FieldRef != nil {
+				ref := *it.FieldRef
+				if ref.APIVersion == "" {
+					ref.APIVersion = "v1"
+				}
+				it.FieldRef = &ref
+			}
+			out[i] = it
+		}
+		return out
+	}
+	return reflect.DeepEqual(normalise(got), normalise(want))
 }
 
 func capabilitySetEqual(got, want []corev1.Capability) bool {

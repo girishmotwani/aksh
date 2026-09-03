@@ -151,8 +151,8 @@ try {
   Check ($mutCA.Length -gt 0) "mutating webhook caBundle populated (len=$($mutCA.Length))"
   Check ($valCA.Length -gt 0) "validating webhook caBundle populated (len=$($valCA.Length))"
 
-  Step "Applying the operator's own namespace and workload fixtures"
-  Invoke-Native "apply workload fixtures" { kubectl apply -f "$here/manifests/00-workload.yaml" }
+  Step "Applying the operator's own namespace"
+  Invoke-Native "apply namespace" { kubectl apply -f "$here/manifests/00-namespace.yaml" }
 
   Step "Creating an AkshPolicy (proves the shipped CRD is usable)"
   $polOut = (kubectl apply -f "$here/manifests/10-policy.yaml" 2>&1 | Out-String)
@@ -176,8 +176,10 @@ try {
   Invoke-Native "label namespace" { kubectl label namespace $ns aksh.dev/inject=enabled --overwrite }
 
   Step "Creating a plain pod and asserting it is injected and becomes Ready"
-  kubectl -n $ns delete pod install-target --ignore-not-found | Out-Null
-  Invoke-Native "create install-target" { kubectl -n $ns apply -f "$here/manifests/00-workload.yaml" }
+  # First creation of this pod in the run: the namespace is now labelled and the
+  # RBAC is in place, so this exercises the operator's real sequence rather than
+  # a delete-and-retry.
+  Invoke-Native "create install-target" { kubectl -n $ns apply -f "$here/manifests/20-target-pod.yaml" }
   $c0    = "$(kubectl -n $ns get pod install-target -o jsonpath='{.spec.containers[0].name}')"
   $ann   = "$(kubectl -n $ns get pod install-target -o jsonpath='{.metadata.annotations.aksh\.dev/injected}')"
   Check ($c0 -eq 'aksh')  "sidecar was injected by the webhook (first container '$c0')"
@@ -199,7 +201,7 @@ try {
       kubectl -n $ns delete rolebinding aksh-proxy-policy-reader --ignore-not-found
     }
     kubectl -n $ns delete pod install-target --ignore-not-found --now | Out-Null
-    Invoke-Native "recreate install-target" { kubectl -n $ns apply -f "$here/manifests/00-workload.yaml" }
+    Invoke-Native "recreate install-target" { kubectl -n $ns apply -f "$here/manifests/20-target-pod.yaml" }
 
     # The proxy's first-snapshot gate defaults to 30s; allow generously more than
     # that, then assert it did NOT come up. A pod that goes Ready here would mean

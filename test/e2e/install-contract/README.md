@@ -39,6 +39,29 @@ Assertion 7 is the first end-to-end exercise of the `Forbidden` path anywhere in
 the operator-visible symptom in #2 had to be described by reading `run.go` rather than by observing a
 run.
 
+## It found a real bug on its first run
+
+The first CI run of this harness failed at assertion 6 with:
+
+```
+admission webhook "validate.pods.aksh.dev" denied the request:
+spec.volumes[name=podinfo]: source drift from required aksh volume
+```
+
+The canonical `podinfo` volume omits `fieldRef.apiVersion`, and the API server's
+`SetDefaults_ObjectFieldSelector` stamps `"v1"` onto it after the mutating webhook returns. The
+validating webhook then compared the two with `reflect.DeepEqual` and always found drift — so with
+`failurePolicy: Fail`, **every injected pod in an opted-in namespace was rejected**.
+
+The unit-test suite could not catch it: `applyAPIServerVolumeDefaults` models the API server's
+defaulting for `hostPath`, `configMap` and `projected`, but did not model `downwardAPI` at all, so
+its regression test passed against a comparison that could never succeed on a real cluster. The same
+class of bug had already been fixed once for `hostcgroup`; `podinfo` was added later and reintroduced
+it.
+
+That is precisely the gap this harness exists to close: a defect invisible to every unit test and to
+every fixture-provisioned e2e, on the path an operator actually takes.
+
 ## What it deliberately does not do
 
 **Traffic.** Allow/deny enforcement is covered by [`../run.ps1`](../run.ps1) and is not duplicated
