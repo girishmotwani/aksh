@@ -358,25 +358,28 @@ custody_move_credential_to_aksh() {
 }
 
 # custody_verify_agent_mount — assert, on the LIVE protected pod, that the
-# mounted credential file is the placeholder and NOT a real token. It compares
-# in-container without ever printing the value: a real token (if custody or the
-# subPath re-mount failed) is captured into a local variable and discarded, only
-# a MATCH/MISMATCH verdict is surfaced.
+# mounted credential is the placeholder and NOT a real token. The diagnostics
+# container is distroless (no shell/coreutils), so it invokes the in-container
+# diagnostics-mcp binary's shell-free "credcheck" mode, which prints only a
+# structural classification ("placeholder"/"jwt"/"other"/...), never the value.
 custody_verify_agent_mount() {
   _cvm_pod=$( running_pod_name "$PROTECT_TARGET_SELECTOR" )
   if [ -z "$_cvm_pod" ]; then
     fail "custody: no running protected pod to verify the credential mount"
     return 1
   fi
-  _cvm_val=$( kcn exec "$_cvm_pod" -c "$MCP_CONTAINER" -- cat "$AGENT_CRED_MOUNT_FILE" 2>/dev/null )
-  if [ "$_cvm_val" = "$CRED_PLACEHOLDER" ]; then
-    ok "custody: the protected pod mounts only the placeholder (real token evicted from the agent)"
-    _cvm_val=""
-    return 0
-  fi
-  _cvm_val=""
-  fail "custody: the protected pod's mounted credential is NOT the placeholder; the real token may still be in the agent"
-  return 1
+  _cvm_kind=$( kcn exec "$_cvm_pod" -c "$MCP_CONTAINER" -- "$MCP_STEAL_BINARY" credcheck 2>/dev/null | tr -d '\r\n' )
+  case "$_cvm_kind" in
+    placeholder)
+      ok "custody: the protected pod mounts only the placeholder (real token evicted from the agent)"
+      return 0 ;;
+    "")
+      fail "custody: could not classify the mounted credential (credcheck produced no output)"
+      return 1 ;;
+    *)
+      fail "custody: the protected pod's mounted credential is '${_cvm_kind}', not the placeholder; the real token may still be in the agent"
+      return 1 ;;
+  esac
 }
 
 # shred_cloud_credential — remove the minted token from local disk.

@@ -110,3 +110,33 @@ func TestBuild_MetadataBoundedAndControlStripped(t *testing.T) {
 		t.Errorf("summary retained control characters: %q", env.Summary)
 	}
 }
+
+func TestClassify(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct{ name, content, want string }{
+		{"placeholder", "AKSH-CUSTODY-PLACEHOLDER-not-a-real-credential", "placeholder"},
+		{"placeholder_nl", "AKSH-CUSTODY-PLACEHOLDER-not-a-real-credential\n", "placeholder"},
+		{"jwt", "aaa.bbb.ccc", "jwt"},
+		{"empty", "   \n", "empty"},
+		{"other", "just-a-string", "other"},
+		{"two_segment", "aa.bb", "other"},
+	}
+	for _, c := range cases {
+		if got := Classify(write(c.name, c.content)); got != c.want {
+			t.Errorf("Classify(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+	if got := Classify(filepath.Join(dir, "absent")); got != "missing" {
+		t.Errorf("Classify(absent) = %q, want missing", got)
+	}
+	if got := Classify(""); got != "missing" {
+		t.Errorf("Classify(empty path) = %q, want missing", got)
+	}
+}

@@ -107,5 +107,38 @@ install_aksh_injector() {
     --namespace aksh-system \
     --values /repo/demo/agentcon-japan/.state/render/aksh-injector/values.yaml || return 1
   kc apply -f "${_iai_dir}/aksh-injector.yaml" >/dev/null || return 1
+  # Applying the rendered manifest resets both webhook configs' caBundle to ""
+  # (the chart ships it empty; the injector patches it at runtime). On a fresh
+  # install the new pod patches it during startup before becoming Ready, but on
+  # an idempotent RE-RUN the Deployment spec is unchanged, so no rollout occurs
+  # and the running pod keeps serving while the caBundle is transiently empty —
+  # a window in which pod admission fails with "unknown authority". Force a
+  # restart so the pod that ends up Ready has freshly re-patched the caBundle
+  # (the injector's readiness gates on caBundle consistency), closing the race
+  # before we label the namespace and roll the agent.
+  kc -n aksh-system rollout restart deployment aksh-injector >/dev/null 2>&1 || true
   wait_rollout_ns aksh-system aksh-injector 240s || return 1
+  wait_injector_webhook_ready 120 || return 1
+}
+
+# wait_injector_webhook_ready — block until every aksh-injector pod reports
+# Ready. The injector's readiness probe passes only when both webhook
+# configurations carry its current CA bundle, so this also gates on caBundle
+# consistency (which a plain rollout-status can miss when a re-apply resets the
+# caBundle without changing the Deployment).
+wait_injector_webhook_ready() {
+  _wiwr_deadline=$(( $( date +%s ) + ${1:-120} ))
+  while [ "$( date +%s )" -lt "$_wiwr_deadline" ]; do
+    _wiwr_states=$( kc -n aksh-system get pods -l app.kubernetes.io/name=aksh-injector \
+      -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null )
+    if [ -n "$_wiwr_states" ] \
+       && ! printf '%s\n' "$_wiwr_states" | grep -q "False" \
+       && printf '%s\n' "$_wiwr_states" | grep -q "True"; then
+      ok "aksh injector Ready (webhook caBundle consistent)"
+      return 0
+    fi
+    sleep 3
+  done
+  fail "aksh injector did not report Ready in time (webhook caBundle may be inconsistent)"
+  return 1
 }

@@ -180,6 +180,53 @@ func boundOr(s, def string) string {
 	return def
 }
 
+// PlaceholderPrefix marks the custody placeholder written into the agent's
+// credential Secret when aksh takes custody. Classify recognises it so the
+// custody check can confirm, from inside the distroless pod, that the mounted
+// credential is the decoy and not a real token — without ever emitting the
+// value.
+const PlaceholderPrefix = "AKSH-CUSTODY-PLACEHOLDER"
+
+// Classify reads the credential at path and returns a structural label only,
+// never the value: "missing" (unreadable), "empty", "placeholder" (custody
+// decoy), "jwt" (a three-segment token), or "other". It is used by the demo's
+// custody verification, which must run in a shell-free container.
+func Classify(path string) string {
+	if path == "" {
+		return "missing"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "missing"
+	}
+	v := strings.TrimSpace(string(data))
+	switch {
+	case v == "":
+		return "empty"
+	case strings.HasPrefix(v, PlaceholderPrefix):
+		return "placeholder"
+	case isThreeSegment(v):
+		return "jwt"
+	default:
+		return "other"
+	}
+}
+
+// isThreeSegment reports whether v is a dot-separated JWT-shaped token with
+// three non-empty segments.
+func isThreeSegment(v string) bool {
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // bound truncates to maxMetaLen runes and strips control characters so a
 // downward-API value cannot smuggle large or binary content into the envelope.
 func bound(s string) string {

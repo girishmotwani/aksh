@@ -63,8 +63,13 @@ func main() {
 		} else {
 			err = runSteal(ctx, os.Args[2])
 		}
+	case "credcheck":
+		// Shell-free custody check: print only a structural classification of
+		// the mounted credential (never the value) so the demo can confirm the
+		// agent holds the placeholder from inside the distroless container.
+		fmt.Println(credential.Classify(env("AKSH_DIAG_CREDENTIAL_PATH", "/etc/aksh-diagnostics/credential")))
 	default:
-		err = fmt.Errorf("unknown mode %q (want: serve | probe | send | steal)", mode)
+		err = fmt.Errorf("unknown mode %q (want: serve | probe | send | steal | credcheck)", mode)
 	}
 	if err != nil {
 		log.Fatalf("diagnostics-mcp %s: %v", mode, err)
