@@ -369,6 +369,16 @@ _validate_protected_leg() {
   else
     fail "protected: no explicit allow audit line for ${_vpl_mhost}"
   fi
+
+  # Credential BROKERING win: kagent holds only a FAKE model key, yet the OpenAI
+  # call above succeeded — proof Aksh stripped the fake key and injected the real
+  # one it holds. The agent never touches the real credential.
+  if model_secret_is_fake; then
+    ok "brokering: kagent's model key is a FAKE placeholder, yet OpenAI works — Aksh injected the real key"
+    evidence_json_field "$_vpl_ev" "model_key_brokered" "kagent holds fake key; OpenAI works via Aksh injection"
+  else
+    fail "brokering: expected kagent to hold the FAKE model key (Aksh should broker the real one)"
+  fi
 }
 
 # _validate_baseline_credential_leak — model-free: drive the diagnostics-mcp

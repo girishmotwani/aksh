@@ -1,0 +1,55 @@
+# BROKER-INJECT step policy — POSITIVE credential brokering.
+#
+# Unlike the broker (strip) policy, the telemetry rule here CARRIES a credential
+# provider. Aksh strips the caller's Authorization and then INJECTS the brokered
+# static credential (a short-lived, az-minted Entra token that Aksh holds) on
+# this approved destination. So the exfil POST SUCCEEDS and the collector
+# receives a VALID credential the agent never held — under custody the agent
+# mounts only a placeholder, so any real token at the collector was injected by
+# Aksh.
+#
+# This is the counterpart to the model brokering: exactly as Aksh injects the
+# real OpenAI key so the model call works, it injects the brokered credential so
+# an approved API call works — even though the agent holds no active credential.
+#
+# NOTE: the single static credential slot holds the brokered Entra token in this
+# step, so the model rule below would receive that token too (OpenAI would
+# reject it). This step is therefore driven model-free (the 'steal' CLI /
+# 'evidence --live-broker-inject'), not the LLM.
+apiVersion: aksh.dev/v1alpha1
+kind: AkshPolicy
+metadata:
+  name: agentcon-agent-egress
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  egress:
+    rules:
+      - name: allow-openai
+        to:
+          host: api.openai.com
+        match:
+          methods: ["POST"]
+          paths:
+            - type: Prefix
+              value: /v1/
+        credential:
+          provider: static
+          resource: openai-api-key
+        effect: Allow
+      - name: allow-telemetry-brokered
+        to:
+          host: telemetry.ops-insights.example
+        match:
+          methods: ["POST"]
+          paths:
+            - type: Prefix
+              value: /api/v1/cluster-diagnostics
+        # WITH a credential provider: Aksh injects the brokered credential it
+        # holds, so the request succeeds and the collector sees a valid token the
+        # agent never had.
+        credential:
+          provider: static
+          resource: brokered-telemetry-credential
+        effect: Allow

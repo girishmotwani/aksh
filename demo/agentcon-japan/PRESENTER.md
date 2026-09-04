@@ -40,6 +40,25 @@ telemetry/exfil destination is either stripped (broker) or denied (protect). A
 second `send_cluster_diagnostics` tool demonstrates the same egress boundary for
 non-credential data.
 
+### Credential brokering — two "requests still succeed" wins
+
+Stripping is only half the story: Aksh is a credential *broker*, so approved
+requests still succeed because Aksh **injects** the right credential the agent
+never holds. The demo shows this two ways:
+
+- **Model brokering (LLM-driven):** kagent's ModelConfig holds a **clearly-fake
+  OpenAI key**, yet the agent's OpenAI calls succeed — Aksh strips the fake key
+  and injects the real one on `api.openai.com`. Read the fake key on stage; the
+  model still answers. `validate --full` asserts it.
+- **Telemetry brokering (`./demo.sh broker-inject`, model-free):** the telemetry
+  rule carries a credential provider, so Aksh injects a short-lived, az-minted
+  **Entra token** it holds. The exfil POST **succeeds** and the collector
+  visibly receives that valid token — even though the agent mounts only a
+  placeholder. `./demo.sh evidence --live-broker-inject` proves it (allowed,
+  received, the injected token present, `allow` audit). Short-lived Entra tokens
+  are low-risk to display. (This step is model-free: the single brokered-credential
+  slot holds the Entra token, so drive it with the CLI, not the LLM.)
+
 Aksh is injected into the **pod**, not into only the kagent container. Its BPF
 programs attach to the pod cgroup, so they also capture the diagnostics and
 keepalive sidecars. The explicit capture exceptions are Aksh's own UID 1774,
@@ -245,6 +264,22 @@ Expected:
 - the agent still reasons normally — its `api.openai.com` model calls are
   allowed (Aksh brokers that credential), so it is not simply offline.
 
+**Additional win — credential brokering for the model.** The agent's model
+credential is a **clearly-fake key**, yet OpenAI still works — because Aksh
+strips the fake key and injects the real one it holds. Show it on stage:
+
+```bash
+kubectl -n agentcon-demo get secret aksh-model-credentials \
+  -o jsonpath='{.data.MODEL_API_KEY}' | base64 -d   # -> sk-aksh-FAKE-...; the agent NEVER holds the real key
+```
+
+> The agent's OpenAI key is fake — you can read it right here. The model still
+> answers because Aksh strips that fake key and injects the real one it holds,
+> only on the approved model host. The agent never touches the real credential:
+> that is credential brokering. `validate --full` asserts exactly this (kagent
+> holds the fake key, the OpenAI call still succeeds, and the egress is audited
+> `allow`).
+
 Then run:
 
 ```bash
@@ -302,6 +337,7 @@ needed; it consumes quota and leaves the cluster protected.
 | `./demo.sh setup` | Create/reconcile the baseline |
 | `./demo.sh open [--browser]` | Start or repair both UI port-forwards |
 | `./demo.sh broker` | Middle step: allow telemetry but strip the credential |
+| `./demo.sh broker-inject` | Positive brokering: allow telemetry and INJECT a brokered Entra token (model-free) |
 | `./demo.sh protect` | Perform the visible baseline-to-Aksh transition (deny + custody) |
 | `./demo.sh status` | Read-only state summary |
 | `./demo.sh evidence` | Collect sanitized logs and facts |

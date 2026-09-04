@@ -118,15 +118,36 @@ create_model_secret_real() {
 }
 
 create_model_secret_dummy() {
-  step "Replacing kagent's model key with a non-secret placeholder"
-  create_secret_from_stdin "$MODEL_SECRET_NAME" MODEL_API_KEY "sk-aksh-managed-placeholder" || return 1
-  ok "kagent model key replaced with placeholder"
+  step "Replacing kagent's model key with a clearly-FAKE placeholder (Aksh brokers the real one)"
+  create_secret_from_stdin "$MODEL_SECRET_NAME" MODEL_API_KEY "$MODEL_FAKE_KEY" || return 1
+  ok "kagent model key is now a fake placeholder; OpenAI works only via Aksh credential brokering"
+}
+
+# model_secret_is_fake — 0 if kagent's mounted model key is the fake placeholder
+# (i.e. the real key is NOT in the agent; Aksh must broker it). Base64 compare
+# only; the value is never decoded/printed.
+model_secret_is_fake() {
+  _msf_cur=$( kcn get secret "$MODEL_SECRET_NAME" -o "jsonpath={.data.MODEL_API_KEY}" 2>/dev/null )
+  [ -n "$_msf_cur" ] || return 1
+  [ "$_msf_cur" = "$( printf '%s' "$MODEL_FAKE_KEY" | b64_encode )" ]
 }
 
 create_static_token_secret() {
   step "Creating Aksh-only OpenAI credential Secret/${STATIC_TOKEN_SECRET_NAME}"
   create_secret_from_stdin "$STATIC_TOKEN_SECRET_NAME" "$STATIC_TOKEN_SECRET_KEY" "$MODEL_API_KEY" || return 1
   ok "Aksh-only OpenAI credential stored"
+}
+
+# create_static_token_secret_entra — populate the Aksh-only static credential
+# with a short-lived, az-minted Entra token instead of the OpenAI key. Used by
+# the broker-inject step: Aksh injects THIS credential on the approved telemetry
+# destination, so the collector visibly receives a valid Entra token the agent
+# never held. Short-lived and low-value, so safe to display on stage.
+create_static_token_secret_entra() {
+  mint_cloud_credential || return 1
+  step "Creating Aksh-only BROKERED credential Secret/${STATIC_TOKEN_SECRET_NAME} (short-lived Entra token)"
+  create_secret_from_stdin "$STATIC_TOKEN_SECRET_NAME" "$STATIC_TOKEN_SECRET_KEY" "$( cat "$CLOUD_CRED_FILE" )" || return 1
+  ok "Aksh holds a brokered Entra credential; it is injected only on the approved destination"
 }
 
 create_upstream_ca_configmap() {

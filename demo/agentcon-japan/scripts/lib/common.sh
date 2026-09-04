@@ -117,6 +117,7 @@ RENDER_DIR="${STATE_DIR}/render"
 : "${BASELINE_MANIFESTS_DIR:=${MANIFESTS_DIR}/baseline}"
 : "${PROTECT_MANIFESTS_DIR:=${MANIFESTS_DIR}/protect}"
 : "${BROKER_MANIFESTS_DIR:=${MANIFESTS_DIR}/broker}"
+: "${BROKER_INJECT_MANIFESTS_DIR:=${MANIFESTS_DIR}/broker-inject}"
 
 # ConfigMap the shim/injector consume for the live, cluster-assigned addresses.
 : "${NET_CONFIGMAP:=aksh-demo-net}"
@@ -129,6 +130,10 @@ RENDER_DIR="${STATE_DIR}/render"
 # that value with a non-secret placeholder and mounts the real key only into
 # Aksh through the injector runtime profile.
 : "${MODEL_SECRET_NAME:=aksh-model-credentials}"
+# The clearly-fake OpenAI key kagent holds under Aksh: OpenAI works ONLY because
+# Aksh strips it and injects the real key (credential brokering). Recognizable
+# so the presenter can show it on stage.
+: "${MODEL_FAKE_KEY:=sk-aksh-FAKE-kagent-key-broker-injects-the-real-one}"
 : "${STATIC_TOKEN_SECRET_NAME:=aksh-openai-credential}"
 : "${STATIC_TOKEN_SECRET_KEY:=token}"
 : "${POD_CA_PRIVATE_SECRET_NAME:=aksh-pod-ca-private}"

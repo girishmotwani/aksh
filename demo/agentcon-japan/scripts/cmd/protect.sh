@@ -27,7 +27,7 @@ cmd_protect() {
       -h|--help) echo "Usage: demo.sh protect   # insert aksh (deny telemetry + custody)"; return 0 ;;
     esac
   done
-  _aksh_insert protect "$PROTECT_MANIFESTS_DIR" 1
+  _aksh_insert protect "$PROTECT_MANIFESTS_DIR" 1 openai
 }
 
 # cmd_broker — the MIDDLE step: allow telemetry (no credential provider), NO
@@ -38,14 +38,30 @@ cmd_broker() {
       -h|--help) echo "Usage: demo.sh broker   # insert aksh, allow telemetry but strip the credential"; return 0 ;;
     esac
   done
-  _aksh_insert broker "$BROKER_MANIFESTS_DIR" 0
+  _aksh_insert broker "$BROKER_MANIFESTS_DIR" 0 openai
 }
 
-# _aksh_insert MODE MANIFESTS_DIR DO_CUSTODY — the shared insertion flow.
+# cmd_broker_inject — POSITIVE brokering: allow telemetry WITH a credential
+# provider, so aksh INJECTS a short-lived brokered Entra token the agent never
+# held. The exfil succeeds and the collector visibly receives that Aksh-injected
+# credential (custody keeps the agent on a placeholder). Model-free by design:
+# the single static slot holds the brokered Entra token, so drive it with the
+# 'steal' CLI / 'evidence --live-broker-inject' rather than the LLM.
+cmd_broker_inject() {
+  for _bi_a in "$@"; do
+    case "$_bi_a" in
+      -h|--help) echo "Usage: demo.sh broker-inject   # insert aksh, allow telemetry and INJECT a brokered credential (model-free)"; return 0 ;;
+    esac
+  done
+  _aksh_insert broker-inject "$BROKER_INJECT_MANIFESTS_DIR" 1 entra
+}
+
+# _aksh_insert MODE MANIFESTS_DIR DO_CUSTODY STATIC_CRED_KIND — the shared flow.
 _aksh_insert() {
   _ai_mode=$1
   _ai_manifests=$2
   _ai_custody=$3
+  _ai_static=${4:-openai}
 
   require_tools docker kind kubectl openssl || return 1
   ensure_state_dirs
@@ -61,7 +77,11 @@ _aksh_insert() {
 
   step "${_ai_mode}: pod CA + static broker credential"
   create_pod_ca_secret || return 1
-  create_static_token_secret || return 1
+  if [ "$_ai_static" = "entra" ]; then
+    create_static_token_secret_entra || return 1
+  else
+    create_static_token_secret || return 1
+  fi
   create_model_secret_dummy || return 1
   create_upstream_ca_configmap || return 1
 

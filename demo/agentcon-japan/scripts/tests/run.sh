@@ -255,6 +255,7 @@ FAKECURL
   assert_eq "agent-cloud-credential" "$AGENT_CRED_SECRET_NAME" "agent credential Secret name is stable"
   assert_eq "aksh-held-cloud-credential" "$AKSH_VAULT_CRED_SECRET_NAME" "Aksh custody vault Secret name is stable"
   assert_contains "$CRED_PLACEHOLDER" "PLACEHOLDER" "custody placeholder is clearly a non-secret marker"
+  assert_contains "$MODEL_FAKE_KEY" "FAKE" "model fake key is clearly a non-secret placeholder"
   # _cloud_cred_kind classifies a JWT-shaped value vs a synthetic one.
   . "${LIB}/secrets.sh"
   CLOUD_CRED_FILE="${STATE_DIR}/cctest"; mkdir -p "$STATE_DIR"
@@ -297,6 +298,13 @@ FAKECURL
   assert_contains "$_broker_policy" "allow-openai" "broker policy still allows the model host"
   # The telemetry rule must NOT carry a credential provider (so aksh strips + injects nothing).
   assert_not_contains "$( printf '%s' "$_broker_policy" | sed -n '/allow-telemetry/,$p' )" "provider:" "broker telemetry rule has no credential provider"
+
+  echo "== broker-inject step: allow-telemetry WITH a brokered credential =="
+  assert_eq "${DEMO_ROOT}/manifests/broker-inject" "$BROKER_INJECT_MANIFESTS_DIR" "BROKER_INJECT_MANIFESTS_DIR points at the broker-inject manifests"
+  _bi_policy=$( cat "${DEMO_ROOT}/manifests/broker-inject/10-akshpolicy.yaml" )
+  assert_contains "$_bi_policy" "allow-telemetry-brokered" "broker-inject policy has the brokered telemetry rule"
+  # The telemetry rule MUST carry a credential provider (so aksh injects, not just strips).
+  assert_contains "$( printf '%s' "$_bi_policy" | sed -n '/allow-telemetry/,$p' )" "provider: static" "broker-inject telemetry rule injects a static brokered credential"
 
   echo "== exact pod-cgroup attachment record =="
   _attach_expected="/host/sys/fs/cgroup/pod123"

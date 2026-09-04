@@ -8,17 +8,24 @@ cmd_evidence() {
   _e_livedeny=1
   _e_livesteal=1
   _e_livebroker=1
+  _e_livebrokerinject=1
   for _e_a in "$@"; do
     case "$_e_a" in
       --list) _e_list=0 ;;
       --live-deny) _e_livedeny=0 ;;
       --live-steal) _e_livesteal=0 ;;
       --live-broker) _e_livebroker=0 ;;
+      --live-broker-inject) _e_livebrokerinject=0 ;;
       -h|--help) _evidence_usage; return 0 ;;
     esac
   done
   load_presenter_env
   ensure_state_dirs
+
+  if [ "$_e_livebrokerinject" -eq 0 ]; then
+    _evidence_live_broker_inject
+    return $?
+  fi
 
   if [ "$_e_livebroker" -eq 0 ]; then
     _evidence_live_broker
@@ -134,6 +141,13 @@ Usage: demo.sh evidence [--list | --live-deny | --live-steal]
                 reports HTTP 202, aksh audits the egress as ALLOW, yet the
                 credential arrives EMPTY (stripped): no new real leak. Requires
                 the BROKER cluster (run 'broker').
+  --live-broker-inject MODEL-FREE positive-brokering contingency: drive the
+                'steal' CLI while telemetry is ALLOWED and carries a credential
+                provider. Proves Aksh INJECTS the brokered credential — the
+                request is ALLOWED, the collector RECEIVES a valid credential
+                (the Aksh-injected brokered token), yet the agent mounts only a
+                placeholder. Requires the BROKER-INJECT cluster (run
+                'broker-inject').
 EOF
 }
 
@@ -433,5 +447,111 @@ _evidence_live_broker() {
   evidence_json_field "$_elb_ev" "fail_count" "$FAIL_COUNT"
   evidence_json_end "$_elb_ev"
   ok "structured evidence: $( basename "$_elb_ev" )"
+  report_failures
+}
+
+# _evidence_live_broker_inject — MODEL-FREE positive-brokering contingency.
+#
+# Requires the BROKER-INJECT state ('demo.sh broker-inject'): aksh installed
+# with the telemetry endpoint ALLOWED and carrying a credential provider, and
+# custody applied so the agent mounts only a placeholder. It drives the
+# diagnostics-mcp 'steal' CLI; aksh strips the agent's (placeholder) credential
+# and INJECTS the brokered credential it holds. Expected outcome: the request is
+# ALLOWED and REACHES the collector, and the collector receives a NON-EMPTY,
+# valid credential — the Aksh-injected brokered token, which the agent never
+# held (its mount is the placeholder).
+_evidence_live_broker_inject() {
+  if ! cluster_exists; then
+    fail "cluster '$CLUSTER' is not up; run 'demo.sh setup' then 'demo.sh broker-inject' first"
+    report_failures; return 1
+  fi
+  _ebi_pod=$( running_pod_name "$PROTECT_TARGET_SELECTOR" )
+  if [ -z "$_ebi_pod" ]; then
+    fail "no Running agent pod for '${PROTECT_TARGET_SELECTOR}'"; report_failures; return 1
+  fi
+  if ! kcn get pod "$_ebi_pod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null | grep -qx aksh; then
+    fail "pod ${_ebi_pod} has no aksh sidecar; run 'demo.sh broker-inject' first"; report_failures; return 1
+  fi
+  if ! kcn get pod "$_ebi_pod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null | grep -qx "$MCP_CONTAINER"; then
+    fail "pod ${_ebi_pod} has no '${MCP_CONTAINER}' container"; report_failures; return 1
+  fi
+  info "broker-inject pod: ${_ebi_pod}"
+
+  # Confirm the agent really holds only a placeholder, so a valid credential at
+  # the collector can only be the Aksh-injected brokered one.
+  _ebi_kind=$( kcn exec "$_ebi_pod" -c "$MCP_CONTAINER" -- "$MCP_STEAL_BINARY" credcheck 2>/dev/null | tr -d '\r\n' )
+  case "$_ebi_kind" in
+    placeholder) ok "broker-inject: the agent mounts only a placeholder (holds no active credential)" ;;
+    *) fail "broker-inject: expected the agent to mount a placeholder, got '${_ebi_kind}'" ;;
+  esac
+
+  _ebi_ep=$( live_steal_endpoint )
+  _ebi_run=$( uniq_id "livebrokerinject" )
+  step "live-broker-inject: driving diagnostics-mcp 'steal' (model-free; telemetry ALLOWED + credential brokered)"
+  info "endpoint: ${_ebi_ep}"
+
+  _ebi_events_before=$( collector_event_count )
+  _ebi_leak_before=$( collector_leak_count )
+  _ebi_allow_before=$( kcn logs "$_ebi_pod" -c aksh --tail=1500 2>/dev/null \
+    | grep -F "\"path\":\"${DIAG_PATH}\"" | grep -c '"disposition":"allow"' || true )
+  [ -n "$_ebi_allow_before" ] || _ebi_allow_before=0
+
+  _ebi_out=$( kcn exec "$_ebi_pod" -c "$MCP_CONTAINER" -- \
+    "$MCP_STEAL_BINARY" steal "$_ebi_ep" 2>&1 )
+  info "diagnostics-mcp steal exit=$?"
+
+  sleep 3
+  _ebi_events_after=$( collector_event_count )
+  _ebi_leak_after=$( collector_leak_count )
+  _ebi_allow_after=$( kcn logs "$_ebi_pod" -c aksh --tail=1500 2>/dev/null \
+    | grep -F "\"path\":\"${DIAG_PATH}\"" | grep -c '"disposition":"allow"' || true )
+  [ -n "$_ebi_allow_after" ] || _ebi_allow_after=0
+
+  # 1) Allowed (HTTP 202) — the request reached the collector.
+  case "$_ebi_out" in
+    *"HTTP 202"*|*"succeeded"*) ok "broker-inject: telemetry upload was ALLOWED (HTTP 202)" ;;
+    *"HTTP 403"*|*"403 Forbidden"*) fail "broker-inject: upload was DENIED (403); expected ALLOW" ;;
+    *) fail "broker-inject: unexpected tool output: ${_ebi_out}" ;;
+  esac
+  # 2) The collector RECEIVED the request.
+  if [ -n "$_ebi_events_before" ] && [ -n "$_ebi_events_after" ] \
+     && [ "$_ebi_events_after" -gt "$_ebi_events_before" ] 2>/dev/null; then
+    ok "broker-inject: collector RECEIVED the request (events ${_ebi_events_before} -> ${_ebi_events_after})"
+  else
+    fail "broker-inject: collector did not record a new request (events ${_ebi_events_before:-?} -> ${_ebi_events_after:-?})"
+  fi
+  # 3) The collector received a NON-EMPTY credential — the Aksh-INJECTED brokered
+  #    token, which the agent (placeholder) never held.
+  if [ -n "$_ebi_leak_before" ] && [ -n "$_ebi_leak_after" ] \
+     && [ "$_ebi_leak_after" -gt "$_ebi_leak_before" ] 2>/dev/null; then
+    ok "broker-inject: collector received the Aksh-INJECTED brokered credential (leak ${_ebi_leak_before} -> ${_ebi_leak_after}); the agent held only a placeholder"
+  else
+    fail "broker-inject: collector received NO credential (leak ${_ebi_leak_before:-?} -> ${_ebi_leak_after:-?}); brokered injection did NOT happen"
+  fi
+  # 4) aksh audited the telemetry egress as ALLOW.
+  if [ "$_ebi_allow_after" -gt "$_ebi_allow_before" ] 2>/dev/null; then
+    ok "broker-inject: aksh audited the telemetry egress as ALLOW (${_ebi_allow_before} -> ${_ebi_allow_after})"
+  else
+    fail "broker-inject: no NEW ${DIAG_PATH} allow audit record"
+  fi
+
+  _ebi_ev="${EVIDENCE_DIR}/${_ebi_run}-live-broker-inject.json"
+  evidence_json_begin "$_ebi_ev"
+  evidence_json_field "$_ebi_ev" "run_id" "$_ebi_run"
+  evidence_json_field "$_ebi_ev" "timestamp" "$( iso_utc )"
+  evidence_json_field "$_ebi_ev" "mode" "model-free positive brokering (telemetry allowed, credential injected)"
+  evidence_json_field "$_ebi_ev" "endpoint" "$_ebi_ep"
+  evidence_json_field "$_ebi_ev" "pod" "$_ebi_pod"
+  evidence_json_field "$_ebi_ev" "agent_mount_kind" "$_ebi_kind"
+  evidence_json_field "$_ebi_ev" "events_before" "${_ebi_events_before:-unknown}"
+  evidence_json_field "$_ebi_ev" "events_after" "${_ebi_events_after:-unknown}"
+  evidence_json_field "$_ebi_ev" "collector_leaks_before" "${_ebi_leak_before:-unknown}"
+  evidence_json_field "$_ebi_ev" "collector_leaks_after" "${_ebi_leak_after:-unknown}"
+  evidence_json_field "$_ebi_ev" "allow_records_before" "$_ebi_allow_before"
+  evidence_json_field "$_ebi_ev" "allow_records_after" "$_ebi_allow_after"
+  evidence_json_field "$_ebi_ev" "tool_output" "$( printf '%s' "$_ebi_out" | scrub_secrets | tr '\n' ' ' )"
+  evidence_json_field "$_ebi_ev" "fail_count" "$FAIL_COUNT"
+  evidence_json_end "$_ebi_ev"
+  ok "structured evidence: $( basename "$_ebi_ev" )"
   report_failures
 }

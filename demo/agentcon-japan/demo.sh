@@ -96,6 +96,12 @@ Commands:
                       collector, but aksh strips the caller's Authorization and
                       injects nothing, so the credential arrives EMPTY. Shows
                       the credential-broker boundary before the full deny.
+  broker-inject       POSITIVE brokering (model-free): allow telemetry WITH a
+                      credential provider so aksh INJECTS a short-lived brokered
+                      Entra token the agent never held. The exfil SUCCEEDS and
+                      the collector receives that Aksh-injected credential (the
+                      agent mounts only a placeholder). Drive with
+                      'evidence --live-broker-inject'.
   protect             insert aksh: injector, AkshPolicy, label the demo
                       workload, roll it, and check the invariants
   status              read-only summary of host + cluster + forwards + evidence
@@ -144,6 +150,7 @@ main() {
     setup)    cmd_setup "$@" ;;
     open)     cmd_open "$@" ;;
     broker)   cmd_broker "$@" ;;
+    broker-inject) cmd_broker_inject "$@" ;;
     protect)  cmd_protect "$@" ;;
     status)   cmd_status "$@" ;;
     validate) cmd_validate "$@" ;;

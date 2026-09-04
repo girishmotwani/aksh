@@ -1,0 +1,41 @@
+# 00-modelconfig.yaml — OpenAI ModelConfig for the PROTECTED state.
+#
+# Identical to manifests/baseline/20-modelconfig.yaml (same name, so kagent
+# updates it in place and re-rolls the agent) EXCEPT for the added tls block.
+#
+# WHY tls here: once the pod is protected, aksh-proxy transparently terminates
+# the agent's HTTPS-to-OpenAI connection and re-presents a leaf signed by the
+# Aksh pod CA. The agent's model client must therefore trust that CA or every
+# model call fails TLS verification. We reference the public Aksh pod CA
+# (Secret/aksh-pod-ca-public, key ca-cert.pem) and keep disableSystemCAs=false, so the
+# client trusts the SYSTEM CAs UNION the Aksh pod CA — the "combined" trust that
+# lets TLS verify both before (real api.openai.com cert) and after (Aksh MITM leaf).
+#
+# This is applied by `protect` after the public CA Secret is minted
+# (protect.sh mints the CA before applying the protect manifests), so the CA
+# reference always resolves.
+#
+# TEMPLATE — same rendering contract as the baseline ModelConfig:
+#   ${MODEL_NAME} and ${MODEL_ENDPOINT} (default https://api.openai.com/v1).
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: agentcon-openai
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  provider: OpenAI
+  model: "${MODEL_NAME}"
+  apiKeySecret: aksh-model-credentials
+  apiKeySecretKey: MODEL_API_KEY
+  openAI:
+    baseUrl: "${MODEL_ENDPOINT}"
+  tls:
+    # Trust the Aksh pod CA in ADDITION to the system CAs (disableSystemCAs:
+    # false), so post-injection MITM TLS verifies. The Secret is the same
+    # ephemeral pod CA the proxy signs leaves with.
+    caCertSecretRef: aksh-pod-ca-public
+    caCertSecretKey: ca-cert.pem
+    disableSystemCAs: false
+    disableVerify: false
