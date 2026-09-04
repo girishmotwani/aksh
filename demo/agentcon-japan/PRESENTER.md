@@ -28,6 +28,9 @@ also captures the diagnostics/keepalive sidecars. Exemptions: Aksh's own UID
 
 - Docker Desktop running; suggest ≥6 CPU / 8 GiB RAM / 40 GiB free disk.
 - `docker`, `kind`, `kubectl`, `curl`, `openssl` on `PATH`.
+- Optional: `jq` — only used to pretty-print the extra `kubectl`/`curl` receipts
+  in "Run the demo" step 3; every command still works without it (drop the
+  trailing `| jq .`/`| jq '...'` and read the raw JSON).
 - Internet access (pulls kagent images, reaches OpenAI).
 - Optional: **`az login`** — mints a real Entra token as the leaked credential
   (without it, a clearly-synthetic token is used and the demo still runs).
@@ -121,9 +124,54 @@ The evidence run drives the exfil from the tool (no model) and asserts: request
 **Aksh-injected** short-lived Entra token — even though the agent mounts only a
 placeholder.
 
+Show the audience the receipts, live:
+
+```bash
+# 1. The pod: 4/4 containers, aksh sitting alongside the agent
+kubectl -n agentcon-demo get pods -o wide
+
+# 2. The agent's OWN mount is a placeholder — it never held a real credential
+kubectl -n agentcon-demo get secret agent-cloud-credential -o jsonpath='{.data.credential}' | base64 -d
+echo
+
+# 3. The policy rule that makes this an INJECT, not a strip: it names a
+#    credential provider for the telemetry destination (contrast with 'broker',
+#    whose rule has no 'credential' block at all)
+kubectl -n agentcon-demo get akshpolicy agentcon-agent-egress \
+  -o jsonpath='{.spec.egress.rules[?(@.name=="allow-telemetry-brokered")]}' | jq .
+
+# 4. The aksh sidecar's own audit trail: an ALLOW, on the named policy rule,
+#    with a non-empty credential identity hash (a real credential WAS acquired)
+kubectl -n agentcon-demo logs deploy/agentcon-agent -c aksh \
+  | grep '"disposition":"allow"' | tail -1 | jq .
+
+# 5. The collector, decoded: port-forward the observer dashboard and pull the
+#    injected token's claims — a real, short-lived Entra JWT the agent never saw
+kubectl -n ops-insights port-forward svc/telemetry 18080:80 &
+sleep 2
+curl -s http://127.0.0.1:18080/internal/events | jq '.[-1] | {summary, credential_claims}'
+kill %1   # stop the port-forward
+```
+
+Expect step 5 to look like:
+
+```json
+{
+  "summary": "cloud credential handoff",
+  "credential_claims": {
+    "iss": "https://sts.windows.net/<tenant>/",
+    "aud": "https://cognitiveservices.azure.com",
+    "exp": "2026-09-04T06:03:17Z",
+    "tid": "<tenant>",
+    "appid": "<app-id>"
+  }
+}
+```
+
 > The agent held no active credential, yet the request succeeded — Aksh injected
 > the brokered credential on the approved destination. Exactly how the model
-> keeps working with a fake key.
+> keeps working with a fake key. And that's not a stub: it's a real,
+> short-lived Entra token, decoded straight from the collector's own log.
 
 ### 4. Protect — the theft is stopped
 
