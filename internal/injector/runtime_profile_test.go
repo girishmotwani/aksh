@@ -276,6 +276,47 @@ func TestVolumeSourceEquivalent_SecretItemsDriftRejected(t *testing.T) {
 	}
 }
 
+func canonicalPodInfoSource(t *testing.T) corev1.VolumeSource {
+	t.Helper()
+	for _, v := range canonicalVolumes(fullProfile()) {
+		if v.Name == "podinfo" {
+			return v.VolumeSource
+		}
+	}
+	t.Fatal("podinfo volume not found in canonical volumes")
+	return corev1.VolumeSource{}
+}
+
+func TestVolumeSourceEquivalent_DownwardAPIFieldRefAPIVersionDefaultingTolerated(t *testing.T) {
+	want := canonicalPodInfoSource(t)
+	// Simulate API-server defaulting: FieldRef.APIVersion populated to "v1"
+	// after the mutating webhook returns. The equivalence must still hold, or
+	// the validating webhook rejects the pod its own mutating webhook produced.
+	got := *want.DeepCopy()
+	got.DownwardAPI.Items[0].FieldRef.APIVersion = "v1"
+	if !volumeSourceEquivalent(got, want) {
+		t.Fatal("downwardAPI FieldRef.APIVersion defaulting not tolerated")
+	}
+}
+
+func TestVolumeSourceEquivalent_DownwardAPIFieldPathDriftRejected(t *testing.T) {
+	want := canonicalPodInfoSource(t)
+	got := *want.DeepCopy()
+	got.DownwardAPI.Items[0].FieldRef.FieldPath = "metadata.annotations"
+	if volumeSourceEquivalent(got, want) {
+		t.Fatal("downwardAPI fieldPath drift accepted")
+	}
+}
+
+func TestVolumeSourceEquivalent_DownwardAPIItemPathDriftRejected(t *testing.T) {
+	want := canonicalPodInfoSource(t)
+	got := *want.DeepCopy()
+	got.DownwardAPI.Items[0].Path = "annotations"
+	if volumeSourceEquivalent(got, want) {
+		t.Fatal("downwardAPI item path drift accepted")
+	}
+}
+
 // --- mutation idempotency with a configured profile ------------------------
 
 func TestPatch_ConfiguredProfile_IsIdempotent(t *testing.T) {

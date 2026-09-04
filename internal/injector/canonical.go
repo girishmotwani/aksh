@@ -104,11 +104,58 @@ func volumeSourceEquivalent(got, want corev1.VolumeSource) bool {
 	case want.DownwardAPI != nil:
 		// Items carry the security-relevant content (which pod fields are
 		// exposed and at what path); defaultMode is defaulted by the API server
-		// after the mutating webhook returns and must not be compared.
-		return got.DownwardAPI != nil && reflect.DeepEqual(got.DownwardAPI.Items, want.DownwardAPI.Items)
+		// after the mutating webhook returns and must not be compared. Each
+		// item's FieldRef.APIVersion is ALSO defaulted (to "v1") after the
+		// mutating webhook returns, so it is normalised rather than compared
+		// verbatim -- otherwise the validating webhook would reject the very
+		// downwardAPI volume its own mutating webhook just injected.
+		return got.DownwardAPI != nil && downwardAPIItemsEquivalent(got.DownwardAPI.Items, want.DownwardAPI.Items)
 	default:
 		return reflect.DeepEqual(got, want)
 	}
+}
+
+// downwardAPIItemsEquivalent compares downwardAPI volume items in order,
+// treating an unset FieldRef.APIVersion as equal to the API-server default
+// "v1". Path, Mode and ResourceFieldRef are compared exactly.
+func downwardAPIItemsEquivalent(got, want []corev1.DownwardAPIVolumeFile) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		g, w := got[i], want[i]
+		if g.Path != w.Path {
+			return false
+		}
+		if !reflect.DeepEqual(g.Mode, w.Mode) {
+			return false
+		}
+		if !reflect.DeepEqual(g.ResourceFieldRef, w.ResourceFieldRef) {
+			return false
+		}
+		if !objectFieldSelectorEquivalent(g.FieldRef, w.FieldRef) {
+			return false
+		}
+	}
+	return true
+}
+
+// objectFieldSelectorEquivalent compares two downwardAPI fieldRefs, normalising
+// the API-defaulted APIVersion ("" == "v1").
+func objectFieldSelectorEquivalent(got, want *corev1.ObjectFieldSelector) bool {
+	if (got == nil) != (want == nil) {
+		return false
+	}
+	if got == nil {
+		return true
+	}
+	normVersion := func(s string) string {
+		if s == "" {
+			return "v1"
+		}
+		return s
+	}
+	return got.FieldPath == want.FieldPath && normVersion(got.APIVersion) == normVersion(want.APIVersion)
 }
 
 // hostPathTypeEquivalent treats a nil *HostPathType and a pointer to the empty
