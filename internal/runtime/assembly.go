@@ -19,6 +19,7 @@ import (
 	"github.com/girishmotwani/aksh/internal/policy/watch"
 	"github.com/girishmotwani/aksh/internal/token"
 	"github.com/girishmotwani/aksh/internal/token/entra"
+	"github.com/girishmotwani/aksh/internal/token/static"
 )
 
 const (
@@ -59,16 +60,26 @@ func (o *Orchestrator) assemble(ca pki.CAProvider, store *watch.Store, sink audi
 	if err != nil {
 		return nil, fmt.Errorf("runtime: entra acquirer: %w", err)
 	}
-	guarded := runtimeTokenAcquirer{
-		Base:     acquirer,
-		Breaker:  token.NewBreaker(breakerThreshold, breakerProbeIntervalSec),
-		Negative: token.NewNegativeCache(negativeCacheEntries, negativeCacheTTL),
+
+	// Provider dispatch sits ABOVE per-provider guarded acquirers so each
+	// provider owns an isolated breaker and negative cache: an Entra outage
+	// tripping its breaker never denies static reads, and a permanent static
+	// misconfiguration never poisons Entra's negative cache (and vice versa).
+	// The static acquirer is built only when a token path is set, so a policy
+	// selecting an unconfigured provider fails closed at the dispatch.
+	dispatch := providerDispatchAcquirer{Entra: newGuardedAcquirer(acquirer)}
+	if path := o.cfg.Token.Static.Path; path != "" {
+		staticAcq, err := static.NewAcquirer(static.Options{TokenPath: path})
+		if err != nil {
+			return nil, fmt.Errorf("runtime: static acquirer: %w", err)
+		}
+		dispatch.Static = newGuardedAcquirer(staticAcq)
 	}
-	o.tokenCache = token.NewTokenCache(guarded, token.CacheOptions{MaxEntries: tokenCacheEntries})
+	o.tokenCache = token.NewTokenCache(dispatch, token.CacheOptions{MaxEntries: tokenCacheEntries})
 
 	// MatchStage reads the watch.Store (Current/Fresh) with the configured
-	// staleness bound; AcquireStage pulls from the guarded token cache, never
-	// directly from Entra.
+	// staleness bound; AcquireStage pulls from the token cache fronting the
+	// provider dispatch, never directly from an acquirer.
 	o.matchStage = &pipeline.MatchStage{
 		Store:        store,
 		Matcher:      policy.NewMatcher(),

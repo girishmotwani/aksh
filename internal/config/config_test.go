@@ -30,6 +30,7 @@ var akshEnvKeys = []string{
 	"AKSH_ENTRA_TENANT_ID",
 	"AKSH_ENTRA_CLIENT_ID",
 	"AKSH_ENTRA_AUTHORITY",
+	"AKSH_STATIC_TOKEN_PATH",
 	"AKSH_AUDIT_SINK",
 }
 
@@ -125,6 +126,9 @@ func TestLoad_DefaultsOnly_ReturnsLoopbackAndFailClosedDefaults(t *testing.T) {
 	if cfg.Token.SATokenPath != "/var/run/secrets/aksh/token" {
 		t.Errorf("SATokenPath = %q, want default", cfg.Token.SATokenPath)
 	}
+	if cfg.Token.Static.Path != "" {
+		t.Errorf("Token.Static.Path = %q, want empty by default (no static provider)", cfg.Token.Static.Path)
+	}
 	if cfg.CA.PrivDir != "/var/run/aksh/ca-priv" {
 		t.Errorf("CA.PrivDir = %q, want default", cfg.CA.PrivDir)
 	}
@@ -170,6 +174,36 @@ audit:
 	// Untouched fields keep defaults.
 	if cfg.Listener.Address != "127.0.0.1:15001" {
 		t.Errorf("Listener.Address = %q, want default", cfg.Listener.Address)
+	}
+}
+
+// TestLoadFrom_StaticTokenPath_FileAndEnv verifies the optional static bearer
+// credential path is read from YAML (token.static.path) and overridden by the
+// AKSH_STATIC_TOKEN_PATH env var, mirroring every other Token field's
+// precedence. No token literal is ever accepted — only a file path.
+func TestLoadFrom_StaticTokenPath_FileAndEnv(t *testing.T) {
+	path := writeFile(t, `
+policy:
+  namespace: ns
+token:
+  static:
+    path: /file/static-token
+`)
+	cfg, err := LoadFrom(path, emptyGetenv)
+	if err != nil {
+		t.Fatalf("LoadFrom() error = %v", err)
+	}
+	if cfg.Token.Static.Path != "/file/static-token" {
+		t.Fatalf("Static.Path from file = %q, want /file/static-token", cfg.Token.Static.Path)
+	}
+
+	env := mapGetenv(map[string]string{"AKSH_STATIC_TOKEN_PATH": "/env/static-token"})
+	cfg, err = LoadFrom(path, env)
+	if err != nil {
+		t.Fatalf("LoadFrom() with env error = %v", err)
+	}
+	if cfg.Token.Static.Path != "/env/static-token" {
+		t.Fatalf("Static.Path from env = %q, want /env/static-token", cfg.Token.Static.Path)
 	}
 }
 

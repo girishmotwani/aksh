@@ -7,7 +7,7 @@ import (
 )
 
 func isCanonicalAkshPod(pod *corev1.Pod, opts InjectorOptions) bool {
-	return isCanonicalAkshShape(pod, opts) && canonicalVolumeSourcesPresent(pod)
+	return isCanonicalAkshShape(pod, opts) && canonicalVolumeSourcesPresent(pod, opts.RuntimeProfile)
 }
 
 // isCanonicalAkshShape is the canonical contract for everything except the
@@ -42,16 +42,16 @@ func isCanonicalAkshShape(pod *corev1.Pod, opts InjectorOptions) bool {
 	if aksh.SecurityContext.Capabilities == nil || !capabilitySetEqual(aksh.SecurityContext.Capabilities.Add, canonicalCapabilities) {
 		return false
 	}
-	if !canonicalEnvPresent(aksh.Env, pod.Namespace) {
+	if !canonicalEnvPresent(aksh.Env, pod.Namespace, opts.RuntimeProfile) {
 		return false
 	}
-	return canonicalMountsPresent(aksh.VolumeMounts)
+	return canonicalMountsPresent(aksh.VolumeMounts, opts.RuntimeProfile)
 }
 
 // canonicalVolumeSourcesPresent reports whether every aksh-owned volume exists
 // with its golden source.
-func canonicalVolumeSourcesPresent(pod *corev1.Pod) bool {
-	for _, want := range canonicalVolumes() {
+func canonicalVolumeSourcesPresent(pod *corev1.Pod, profile RuntimeProfile) bool {
+	for _, want := range canonicalVolumes(profile) {
 		got, ok := findVolume(pod, want.Name)
 		if !ok || !volumeSourceEquivalent(got.VolumeSource, want.VolumeSource) {
 			return false
@@ -87,6 +87,18 @@ func volumeSourceEquivalent(got, want corev1.VolumeSource) bool {
 		}
 		return reflect.DeepEqual(got.ConfigMap.Items, want.ConfigMap.Items) &&
 			reflect.DeepEqual(got.ConfigMap.Optional, want.ConfigMap.Optional)
+	case want.Secret != nil:
+		// SecretName and Items (which Secret keys map to which files) carry the
+		// security-relevant content and are compared exactly. defaultMode is
+		// defaulted by the API server to 0644 AFTER the mutating webhook returns,
+		// so it must not be compared -- otherwise the validating webhook would
+		// reject every Secret-backed CA pod the mutating webhook just produced.
+		// Optional is not API-defaulted and is compared exactly.
+		if got.Secret == nil || got.Secret.SecretName != want.Secret.SecretName {
+			return false
+		}
+		return reflect.DeepEqual(got.Secret.Items, want.Secret.Items) &&
+			reflect.DeepEqual(got.Secret.Optional, want.Secret.Optional)
 	case want.Projected != nil:
 		return got.Projected != nil && reflect.DeepEqual(got.Projected.Sources, want.Projected.Sources)
 	case want.DownwardAPI != nil:
@@ -130,18 +142,23 @@ func capabilitySetEqual(got, want []corev1.Capability) bool {
 }
 
 // configSourcedEnv names carry deployment/config- or node-topology-sourced
-// values, so the canonical predicate checks presence only, not value:
+// values. In the LEGACY (unset-profile) case the canonical predicate checks
+// presence only, not value:
 //   - AKSH_ENTRA_* come "from injector/config source" (design §Patch flow); the
 //     e2e golden oracle (test/e2e/manifests/50-aksh-pod.yaml) carries real Entra
-//     values while the injector emits placeholders. Both are canonical in shape.
+//     values while a legacy injector emits placeholders. Both are canonical in
+//     shape.
 //   - AKSH_CAPTURE_HOST_CGROUP_MOUNT names where the host cgroup2 root is bind-
 //     mounted, which is a per-node topology detail: pure cgroup-v2 nodes (AKS,
 //     production) use "/host/sys/fs/cgroup" while a hybrid-cgroup kind node uses
 //     the "/unified" subtree. The host-path volume ("hostcgroup" -> /sys/fs/cgroup)
 //     stays value-locked; only the in-mount subpath varies by node.
 //
-// Value-comparing these would spuriously reject correctly-injected pods across
-// environments and break idempotency.
+// When the runtime profile SETS the corresponding field, the value stops being
+// config-sourced and is compared exactly (value-locked) by presenceOnlyEnv, so
+// a tampered Entra/cgroup value is rejected. Value-comparing an UNSET field
+// would spuriously reject correctly-injected pods across environments and break
+// idempotency.
 var configSourcedEnv = map[string]bool{
 	"AKSH_ENTRA_TENANT_ID":           true,
 	"AKSH_ENTRA_CLIENT_ID":           true,
@@ -149,7 +166,28 @@ var configSourcedEnv = map[string]bool{
 	"AKSH_CAPTURE_HOST_CGROUP_MOUNT": true,
 }
 
-func canonicalEnvPresent(got []corev1.EnvVar, namespace string) bool {
+// presenceOnlyEnv reports whether a config-sourced env var is checked for
+// presence only for the given profile. A config-sourced name is presence-only
+// exactly when the profile leaves its field unset (the legacy placeholder);
+// once the operator configures it, the canonical predicate value-locks it.
+func presenceOnlyEnv(name string, p RuntimeProfile) bool {
+	if !configSourcedEnv[name] {
+		return false
+	}
+	switch name {
+	case "AKSH_ENTRA_TENANT_ID":
+		return p.EntraTenantID == ""
+	case "AKSH_ENTRA_CLIENT_ID":
+		return p.EntraClientID == ""
+	case "AKSH_ENTRA_AUTHORITY":
+		return p.EntraAuthority == ""
+	case "AKSH_CAPTURE_HOST_CGROUP_MOUNT":
+		return p.HostCgroupMount == ""
+	}
+	return true
+}
+
+func canonicalEnvPresent(got []corev1.EnvVar, namespace string, profile RuntimeProfile) bool {
 	env := map[string]corev1.EnvVar{}
 	for _, e := range got {
 		env[e.Name] = e
@@ -160,12 +198,12 @@ func canonicalEnvPresent(got []corev1.EnvVar, namespace string) bool {
 	if _, ok := env["SSL_CERT_FILE"]; ok {
 		return false
 	}
-	for _, want := range canonicalEnv(namespace) {
+	for _, want := range canonicalEnv(namespace, profile) {
 		got, ok := env[want.Name]
 		if !ok {
 			return false
 		}
-		if configSourcedEnv[want.Name] {
+		if presenceOnlyEnv(want.Name, profile) {
 			continue
 		}
 		if want.ValueFrom != nil {
@@ -181,12 +219,12 @@ func canonicalEnvPresent(got []corev1.EnvVar, namespace string) bool {
 	return true
 }
 
-func canonicalMountsPresent(got []corev1.VolumeMount) bool {
+func canonicalMountsPresent(got []corev1.VolumeMount, profile RuntimeProfile) bool {
 	mounts := map[string]corev1.VolumeMount{}
 	for _, m := range got {
 		mounts[m.Name] = m
 	}
-	for _, want := range canonicalMounts() {
+	for _, want := range canonicalMounts(profile) {
 		got, ok := mounts[want.Name]
 		if !ok || got.MountPath != want.MountPath || got.ReadOnly != want.ReadOnly {
 			return false

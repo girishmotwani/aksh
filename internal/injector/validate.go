@@ -1,6 +1,8 @@
 package injector
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -8,23 +10,26 @@ import (
 // field-specific bounded reason so the admission response names the offending
 // field. Reasons are intentionally short and free of request-derived content.
 const (
-	reasonAkshShape         = "must match canonical aksh sidecar shape"
-	reasonHostNetwork       = "denied"
-	reasonShareProcessNS    = "denied"
-	reasonAutomount         = "denied"
-	reasonIstio             = "istio coexistence denied"
-	reasonReservedUID       = "must not use reserved uid 1774"
-	reasonCapabilities      = "must not add privileged capabilities"
-	reasonPrivEscalation    = "must not be true"
-	reasonPrivileged        = "must not be true"
-	reasonRunAsNonRoot      = "must not be false"
-	reasonTokenLeakage      = "must not mount aksh service-account token"
-	reasonCAPrivLeakage     = "must not mount ca-priv"
-	reasonCAPubMutability   = "must be read-only"
-	reasonHostCgroupLeakage = "must not mount hostcgroup"
-	reasonAkshCredVolume    = "must not mount upstream-ca"
-	reasonVolumeSource      = "source drift from required aksh volume"
-	reasonVolumeMissing     = "required aksh volume missing"
+	reasonAkshShape          = "must match canonical aksh sidecar shape"
+	reasonHostNetwork        = "denied"
+	reasonShareProcessNS     = "denied"
+	reasonAutomount          = "denied"
+	reasonIstio              = "istio coexistence denied"
+	reasonReservedUID        = "must not use reserved uid 1774"
+	reasonCapabilities       = "must not add privileged capabilities"
+	reasonPrivEscalation     = "must not be true"
+	reasonPrivileged         = "must not be true"
+	reasonRunAsNonRoot       = "must not be false"
+	reasonTokenLeakage       = "must not mount aksh service-account token"
+	reasonCAPrivLeakage      = "must not mount ca-priv"
+	reasonCAPubMutability    = "must be read-only"
+	reasonHostCgroupLeakage  = "must not mount hostcgroup"
+	reasonAkshCredVolume     = "must not mount upstream-ca"
+	reasonStaticTokenLeakage = "must not mount aksh static bearer credential"
+	reasonProtectedSecretVol = "must not reference an aksh-protected Secret via a volume"
+	reasonProtectedSecretEnv = "must not reference an aksh-protected Secret via env"
+	reasonVolumeSource       = "source drift from required aksh volume"
+	reasonVolumeMissing      = "required aksh volume missing"
 )
 
 const (
@@ -78,7 +83,10 @@ func (s *SidecarInjector) Validate(pod *corev1.Pod) error {
 	if err := validateMountLeakage(pod); err != nil {
 		return err
 	}
-	return validateVolumeSources(pod)
+	if err := validateProtectedSecretContainment(pod, opts.RuntimeProfile); err != nil {
+		return err
+	}
+	return validateVolumeSources(pod, opts.RuntimeProfile)
 }
 
 func validatePodLevel(pod *corev1.Pod) error {
@@ -230,6 +238,8 @@ func checkContainerMountLeakage(pod *corev1.Pod, base string, mounts []corev1.Vo
 			return AdmissionError{Field: field, Reason: reasonHostCgroupLeakage}
 		case m.Name == "upstream-ca":
 			return AdmissionError{Field: field, Reason: reasonAkshCredVolume}
+		case m.Name == staticTokenVolumeName:
+			return AdmissionError{Field: field, Reason: reasonStaticTokenLeakage}
 		}
 	}
 	return nil
@@ -248,11 +258,119 @@ func isAkshProjectedToken(pod *corev1.Pod, volumeName string) bool {
 	return false
 }
 
+// protectedSecretNames is the set of Secret names Aksh mounts into the sidecar
+// and that must never be reachable by an application/init/ephemeral container:
+// the per-pod CA Secret (private key + certificate) and the static bearer
+// credential Secret. Both come from the operator-controlled RuntimeProfile; when
+// a field is unset the corresponding Secret does not exist and is not protected.
+func protectedSecretNames(profile RuntimeProfile) map[string]bool {
+	names := map[string]bool{}
+	if n := strings.TrimSpace(profile.CASecretName); n != "" {
+		names[n] = true
+	}
+	if n := strings.TrimSpace(profile.StaticTokenSecretName); n != "" {
+		names[n] = true
+	}
+	return names
+}
+
+// validateProtectedSecretContainment denies any non-aksh container that reaches
+// a protected Secret by ANY mechanism other than the sanctioned canonical aksh
+// volumes: an arbitrarily named Secret volume, a projected Secret source, an
+// env.valueFrom.secretKeyRef, or an envFrom.secretRef. The canonical aksh
+// volumes themselves (ca-priv/ca-pub/aksh-static-token) legitimately reference
+// these Secrets and are governed separately by validateMountLeakage (mount
+// rules) and validateVolumeSources (exact golden source), so they are skipped
+// here by name. This closes the gap where the name-based mount-leakage check
+// alone could be bypassed by referencing the Secret under a different volume
+// name or through env, exfiltrating the CA private key or the bearer token.
+func validateProtectedSecretContainment(pod *corev1.Pod, profile RuntimeProfile) error {
+	protected := protectedSecretNames(profile)
+	if len(protected) == 0 {
+		return nil
+	}
+	// Canonical aksh volume names are locked to their golden Secret sources and
+	// governed by the mount-leakage rules; exclude them so a legitimate
+	// read-only ca-pub mount is not misread as an illicit reference.
+	canonical := map[string]bool{}
+	for _, v := range canonicalVolumes(profile) {
+		canonical[v.Name] = true
+	}
+
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		if c.Name == akshContainerName {
+			continue
+		}
+		if err := checkContainerSecretContainment(pod, "spec.containers[name="+c.Name+"]", protected, canonical, c.VolumeMounts, c.Env, c.EnvFrom); err != nil {
+			return err
+		}
+	}
+	for i := range pod.Spec.InitContainers {
+		c := &pod.Spec.InitContainers[i]
+		if err := checkContainerSecretContainment(pod, "spec.initContainers[name="+c.Name+"]", protected, canonical, c.VolumeMounts, c.Env, c.EnvFrom); err != nil {
+			return err
+		}
+	}
+	for i := range pod.Spec.EphemeralContainers {
+		c := &pod.Spec.EphemeralContainers[i]
+		if err := checkContainerSecretContainment(pod, "spec.ephemeralContainers[name="+c.Name+"]", protected, canonical, c.VolumeMounts, c.Env, c.EnvFrom); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkContainerSecretContainment(pod *corev1.Pod, base string, protected, canonical map[string]bool, mounts []corev1.VolumeMount, env []corev1.EnvVar, envFrom []corev1.EnvFromSource) error {
+	for _, e := range env {
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil && protected[e.ValueFrom.SecretKeyRef.Name] {
+			return AdmissionError{Field: base + ".env[" + e.Name + "].valueFrom.secretKeyRef", Reason: reasonProtectedSecretEnv}
+		}
+	}
+	for _, ef := range envFrom {
+		if ef.SecretRef != nil && protected[ef.SecretRef.Name] {
+			return AdmissionError{Field: base + ".envFrom.secretRef", Reason: reasonProtectedSecretEnv}
+		}
+	}
+	for _, m := range mounts {
+		if canonical[m.Name] {
+			// Governed by validateMountLeakage + validateVolumeSources.
+			continue
+		}
+		v, ok := findVolume(pod, m.Name)
+		if !ok {
+			continue
+		}
+		if volumeReferencesProtectedSecret(v, protected) {
+			return AdmissionError{Field: base + ".volumeMounts[name=" + m.Name + "]", Reason: reasonProtectedSecretVol}
+		}
+	}
+	return nil
+}
+
+// volumeReferencesProtectedSecret reports whether a volume's source reaches a
+// protected Secret, either directly (secret volume) or via any projected Secret
+// source. Projected sources are the subtle vector: a volume can look innocuous
+// while smuggling a protected Secret in as one of several projections.
+func volumeReferencesProtectedSecret(v corev1.Volume, protected map[string]bool) bool {
+	if v.Secret != nil && protected[v.Secret.SecretName] {
+		return true
+	}
+	if v.Projected != nil {
+		for _, src := range v.Projected.Sources {
+			if src.Secret != nil && protected[src.Secret.Name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // validateVolumeSources denies an aksh-owned volume that is missing or whose
 // source drifted from its golden definition. A protected final pod must carry
 // every canonical aksh volume with its exact golden source.
-func validateVolumeSources(pod *corev1.Pod) error {
-	for _, want := range canonicalVolumes() {
+func validateVolumeSources(pod *corev1.Pod, profile RuntimeProfile) error {
+	for _, want := range canonicalVolumes(profile) {
 		got, ok := findVolume(pod, want.Name)
 		if !ok {
 			return AdmissionError{Field: "spec.volumes[name=" + want.Name + "]", Reason: reasonVolumeMissing}

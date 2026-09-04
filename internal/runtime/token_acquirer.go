@@ -30,6 +30,19 @@ type runtimeTokenAcquirer struct {
 	Metrics  AcquireFailureRecorder
 }
 
+// newGuardedAcquirer wraps a base acquirer with a fresh, independent breaker and
+// negative cache so each credential provider is isolated: one provider's outage
+// or permanent misconfiguration cannot open the other's breaker or poison its
+// negative cache. Callers build one per provider and route between them with a
+// providerDispatchAcquirer.
+func newGuardedAcquirer(base token.TokenAcquirer) runtimeTokenAcquirer {
+	return runtimeTokenAcquirer{
+		Base:     base,
+		Breaker:  token.NewBreaker(breakerThreshold, breakerProbeIntervalSec),
+		Negative: token.NewNegativeCache(negativeCacheEntries, negativeCacheTTL),
+	}
+}
+
 // Acquire applies the fail-closed gate sequence: negative-cache lookup, then
 // breaker admission, then the base exchange. On a fresh classified failure it
 // records the breaker outcome, populates the negative cache for permanent

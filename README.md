@@ -27,7 +27,8 @@ brokering, audit/metrics, sidecar-injecting admission webhook, Helm chart, CI,
 and published container images are implemented and deployable
 ([Deploying](deploy/README.md)), and validated end-to-end on both `kind` and a
 real **AKS** cluster. It is pre-1.0: the scope is deliberately narrow today
-(egress-only, HTTP/1.x, Entra credentials) — see [Limitations](#limitations).
+(egress-only, HTTP/1.x, Entra WIF plus file-backed static bearer credentials) —
+see [Limitations](#limitations).
 
 ## Why
 
@@ -186,6 +187,7 @@ Unknown YAML keys are rejected. The most operationally relevant variables:
 | `AKSH_SA_TOKEN_PATH` | Projected service-account token path for Entra WIF | `/var/run/secrets/aksh/token` |
 | `AKSH_ENTRA_TENANT_ID` / `AKSH_ENTRA_CLIENT_ID` | Entra workload-identity-federation identity | *(required, no default)* |
 | `AKSH_ENTRA_AUTHORITY` | Entra authority endpoint | `https://login.microsoftonline.com` |
+| `AKSH_STATIC_TOKEN_PATH` | File holding a static bearer credential (e.g. an API key) for the `static` credential provider; mounted only into the Aksh sidecar — see [Static bearer credentials](#static-bearer-credentials) | *(unset disables the `static` provider)* |
 | `AKSH_AUDIT_SINK` | Audit record sink; cannot be disabled | `stdout` |
 | `AKSH_CONTROLPLANE_PORT` | `/metrics`, `/healthz`, `/readyz` port | `15020` |
 
@@ -219,6 +221,45 @@ Rules, all enforced at startup with no `AKSH_ALLOW_UNSAFE_STARTUP` override:
 The kernel map holding these prefixes is frozen by the loader once written, so a
 proxy that still holds `CAP_BPF` at run time cannot widen its own bypass.
 
+### Static bearer credentials
+
+Entra Workload Identity Federation is the dynamic credential provider: Aksh
+exchanges the pod's projected ServiceAccount token for a short-lived access
+token on every acquisition. Many APIs, however, authenticate with a long-lived
+API key rather than an OAuth token. For those, Aksh supports a **static bearer
+credential provider** that keeps the key out of the agent.
+
+Set `AKSH_STATIC_TOKEN_PATH` (YAML: `token.static.path`) to a file holding the
+bearer credential. A policy rule whose `credential.provider` is `static` then
+causes Aksh to read that file and inject `Authorization: Bearer <key>` after the
+request is allowed — exactly like the Entra path, and still overwriting any
+caller-supplied `Authorization`. The `credential.resource` field is used only as
+a stable cache/identity label; the key itself never appears in policy:
+
+```yaml
+credential:
+  provider: static
+  resource: openai-api-key   # identity label only, not the key
+```
+
+Custody model: the agent container is given a **dummy** key, and the real key is
+mounted read-only **only into the Aksh sidecar**. The injector wires this for
+you when the runtime profile sets `staticToken.secretName`/`secretKey` (CLI:
+`-static-token-secret-name` / `-static-token-secret-key`; env:
+`AKSH_INJECTOR_STATIC_TOKEN_SECRET_NAME` / `AKSH_INJECTOR_STATIC_TOKEN_SECRET_KEY`):
+it adds a `Secret`-backed volume (`aksh-static-token`) mounted at
+`/var/run/secrets/aksh-static` in the aksh container, stamps
+`AKSH_STATIC_TOKEN_PATH=/var/run/secrets/aksh-static/token`, and the validating
+webhook denies any application container that tries to mount that volume. A
+configured-but-missing/empty secret **fails closed at startup** (local self-test,
+no network call).
+
+Limitation: the static provider has **no refresh protocol**. Aksh re-reads the
+file on each acquisition and honours a bounded synthetic cache expiry, so a
+rotated `Secret` takes effect once the kubelet rewrites the projected file and
+the cache entry expires — there is no proactive refresh or revocation signal as
+there is for a short-lived Entra token.
+
 ## Limitations
 
 - **Managed-Kubernetes platform validation is in progress.** aksh is verified
@@ -233,7 +274,10 @@ proxy that still holds `CAP_BPF` at run time cannot widen its own bypass.
   yet — they are emitted empty. Tracked as issue #62.
 - **HTTP/1.x only.** ALPN is pinned to `http/1.1`; the request path does not
   speak HTTP/2.
-- **Entra is the only supported credential provider.**
+- **Entra WIF is the only *dynamic* credential provider.** A file-backed
+  `static` bearer provider is also supported for API-key services (see [Static
+  bearer credentials](#static-bearer-credentials)); it keeps the key outside the
+  agent but has no refresh protocol beyond re-reading the file and cache expiry.
 - **Egress only.** Ingress is not enforced.
 
 ## Roadmap

@@ -39,6 +39,59 @@ injector:
 # production — do not ship :latest.
 proxyImage: aksh-proxy:latest
 
+# Runtime profile stamped into every injected aksh sidecar. All fields are
+# optional; leaving the whole block at its defaults reproduces the historical
+# placeholder profile (empty Entra values, default host cgroup mount, no
+# DNS/bypass/local-cgroup env, emptyDir CA volumes). Set the fields your cluster
+# needs to make injected pods functional. Each maps to a typed injector setting
+# (no free-form env injection) via an AKSH_INJECTOR_* container env var.
+runtimeProfile:
+  # Startup Entra identity the proxy requires. Dummy-but-valid values are
+  # permitted when the policy carries no real credentials. Maps to the pod's
+  # AKSH_ENTRA_TENANT_ID / AKSH_ENTRA_CLIENT_ID / AKSH_ENTRA_AUTHORITY.
+  entra:
+    tenantId: ""
+    clientId: ""
+    authority: ""
+  # Cgroup mount topology. hostMount overrides the in-container path of the host
+  # cgroup2 bind (pod env AKSH_CAPTURE_HOST_CGROUP_MOUNT; default
+  # /host/sys/fs/cgroup). localMount, when set, additionally emits the pod env
+  # AKSH_CAPTURE_LOCAL_CGROUP_MOUNT (the proxy's own cgroup2 mount, gate P3).
+  cgroup:
+    hostMount: ""
+    localMount: ""
+  # Capture network shaping. dnsServer (host:port) emits the pod env
+  # AKSH_CAPTURE_DNS_SERVER; bypassCidrs (comma-separated CIDR prefixes) emits
+  # the pod env AKSH_CAPTURE_BYPASS_CIDRS verbatim. Both are validated at
+  # injector startup and rejected if malformed (fail-closed).
+  capture:
+    dnsServer: ""
+    bypassCidrs: ""
+  # Pod CA material. When secretName is set, the ca-priv and ca-pub volumes are
+  # backed by this Secret instead of emptyDir: ca-priv projects the certificate
+  # and private key, ca-pub the public certificate only. The three keys select
+  # which Secret data keys map to the files the proxy reads.
+  ca:
+    secretName: ""
+    certKey: tls.crt
+    privateKeyKey: tls.key
+    publicCertKey: tls.crt
+  # Static bearer credential (e.g. an OpenAI API key) mounted read-only ONLY
+  # into the aksh sidecar. When secretName is set, the injector adds a Secret
+  # volume, mounts it at a fixed path in the aksh container only (never the
+  # application container), and stamps the pod env AKSH_STATIC_TOKEN_PATH so a
+  # policy credential selector with provider "static" injects it as
+  # Authorization: Bearer <key>. secretKey selects which Secret data key maps to
+  # the on-disk token file. Leave secretName empty to disable (default).
+  staticToken:
+    secretName: ""
+    secretKey: token
+  # Stamp the downward-API pod attribution env vars (AKSH_POD_NAMESPACE,
+  # AKSH_POD_NAME, AKSH_POD_UID, AKSH_AGENT_SERVICE_ACCOUNT) used for audit
+  # attribution. Matches the production convention; disable only if you know the
+  # proxy in use does not consume them.
+  podAttribution: true
+
 webhook:
   # Fail-closed: if the injector is unavailable, pod CREATE in an opted-in
   # namespace is rejected rather than admitted uncaptured. Do not weaken this

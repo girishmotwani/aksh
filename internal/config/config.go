@@ -111,14 +111,23 @@ type PodConfig struct {
 	ServiceAccount string
 }
 
-// TokenConfig holds the projected SA token path and Entra WIF settings.
+// TokenConfig holds the projected SA token path, Entra WIF settings, and the
+// optional static bearer credential file.
 type TokenConfig struct {
 	SATokenPath string
 	Entra       EntraConfig
+	Static      StaticConfig
 }
 
 // EntraConfig holds the explicit Entra workload-identity-federation settings.
 type EntraConfig struct{ TenantID, ClientID, Authority string }
+
+// StaticConfig holds the optional file-backed static bearer credential. Path is
+// the absolute path of a file mounted only into the Aksh sidecar (never the
+// application container). Empty means no static provider is configured; a policy
+// selecting provider "static" then fails closed. There is deliberately no token
+// literal — the secret only ever lives on disk, never in config or env.
+type StaticConfig struct{ Path string }
 
 // AuditConfig holds the rejection/decision sink; it cannot be disabled.
 type AuditConfig struct{ Sink string }
@@ -175,20 +184,21 @@ const (
 	// here or derivePodCgroupCandidate would fail closed at startup.
 	defaultCaptureProcCgroupPath = "/proc/self/cgroup"
 
-	envConfigFile    = "AKSH_CONFIG_FILE"
-	envListenerAddr  = "AKSH_LISTENER_ADDRESS"
-	envCAPrivDir     = "AKSH_CA_PRIV_DIR"
-	envCAPubDir      = "AKSH_CA_PUB_DIR"
-	envNamespace     = "AKSH_POLICY_NAMESPACE"
-	envPodLabelsPath = "AKSH_POLICY_POD_LABELS_PATH"
-	envMaxStaleness  = "AKSH_POLICY_MAX_STALENESS"
-	envResync        = "AKSH_POLICY_RESYNC"
-	envFirstSnapshot = "AKSH_POLICY_FIRST_SNAPSHOT_TIMEOUT"
-	envSATokenPath   = "AKSH_SA_TOKEN_PATH"
-	envEntraTenantID = "AKSH_ENTRA_TENANT_ID"
-	envEntraClientID = "AKSH_ENTRA_CLIENT_ID"
-	envEntraAuthorit = "AKSH_ENTRA_AUTHORITY"
-	envAuditSink     = "AKSH_AUDIT_SINK"
+	envConfigFile      = "AKSH_CONFIG_FILE"
+	envListenerAddr    = "AKSH_LISTENER_ADDRESS"
+	envCAPrivDir       = "AKSH_CA_PRIV_DIR"
+	envCAPubDir        = "AKSH_CA_PUB_DIR"
+	envNamespace       = "AKSH_POLICY_NAMESPACE"
+	envPodLabelsPath   = "AKSH_POLICY_POD_LABELS_PATH"
+	envMaxStaleness    = "AKSH_POLICY_MAX_STALENESS"
+	envResync          = "AKSH_POLICY_RESYNC"
+	envFirstSnapshot   = "AKSH_POLICY_FIRST_SNAPSHOT_TIMEOUT"
+	envSATokenPath     = "AKSH_SA_TOKEN_PATH"
+	envEntraTenantID   = "AKSH_ENTRA_TENANT_ID"
+	envEntraClientID   = "AKSH_ENTRA_CLIENT_ID"
+	envEntraAuthorit   = "AKSH_ENTRA_AUTHORITY"
+	envStaticTokenPath = "AKSH_STATIC_TOKEN_PATH"
+	envAuditSink       = "AKSH_AUDIT_SINK"
 
 	// Pod attribution and service account are injected by the S5 Downward API
 	// (metadata namespace/name/uid and spec.serviceAccountName). They feed the
@@ -302,6 +312,9 @@ type yamlConfig struct {
 			ClientID  *string `yaml:"clientID"`
 			Authority *string `yaml:"authority"`
 		} `yaml:"entra"`
+		Static *struct {
+			Path *string `yaml:"path"`
+		} `yaml:"static"`
 	} `yaml:"token"`
 	Audit *struct {
 		Sink *string `yaml:"sink"`
@@ -502,6 +515,9 @@ func applyYAML(cfg *Config, yc yamlConfig) error {
 				cfg.Token.Entra.Authority = *yc.Token.Entra.Authority
 			}
 		}
+		if yc.Token.Static != nil && yc.Token.Static.Path != nil {
+			cfg.Token.Static.Path = *yc.Token.Static.Path
+		}
 	}
 	if yc.Audit != nil && yc.Audit.Sink != nil {
 		cfg.Audit.Sink = *yc.Audit.Sink
@@ -587,6 +603,7 @@ func applyEnv(cfg *Config, getenv func(string) string) (bool, error) {
 	set(envEntraTenantID, &cfg.Token.Entra.TenantID)
 	set(envEntraClientID, &cfg.Token.Entra.ClientID)
 	set(envEntraAuthorit, &cfg.Token.Entra.Authority)
+	set(envStaticTokenPath, &cfg.Token.Static.Path)
 	set(envAuditSink, &cfg.Audit.Sink)
 	set(envPodNamespace, &cfg.Pod.Namespace)
 	set(envPodName, &cfg.Pod.Name)
@@ -648,6 +665,7 @@ func trimFields(cfg *Config) {
 	cfg.Token.Entra.TenantID = strings.TrimSpace(cfg.Token.Entra.TenantID)
 	cfg.Token.Entra.ClientID = strings.TrimSpace(cfg.Token.Entra.ClientID)
 	cfg.Token.Entra.Authority = strings.TrimSpace(cfg.Token.Entra.Authority)
+	cfg.Token.Static.Path = strings.TrimSpace(cfg.Token.Static.Path)
 	cfg.Audit.Sink = strings.TrimSpace(cfg.Audit.Sink)
 	cfg.Pod.Namespace = strings.TrimSpace(cfg.Pod.Namespace)
 	cfg.Pod.Name = strings.TrimSpace(cfg.Pod.Name)

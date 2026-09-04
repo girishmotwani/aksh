@@ -35,6 +35,52 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- with .Values.runtimeProfile.entra.tenantId }}
+            - name: AKSH_INJECTOR_ENTRA_TENANT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.entra.clientId }}
+            - name: AKSH_INJECTOR_ENTRA_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.entra.authority }}
+            - name: AKSH_INJECTOR_ENTRA_AUTHORITY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.cgroup.hostMount }}
+            - name: AKSH_INJECTOR_HOST_CGROUP_MOUNT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.cgroup.localMount }}
+            - name: AKSH_INJECTOR_LOCAL_CGROUP_MOUNT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.capture.dnsServer }}
+            - name: AKSH_INJECTOR_CAPTURE_DNS_SERVER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.capture.bypassCidrs }}
+            - name: AKSH_INJECTOR_CAPTURE_BYPASS_CIDRS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.ca.secretName }}
+            - name: AKSH_INJECTOR_CA_SECRET_NAME
+              value: {{ . | quote }}
+            - name: AKSH_INJECTOR_CA_CERT_KEY
+              value: {{ $.Values.runtimeProfile.ca.certKey | quote }}
+            - name: AKSH_INJECTOR_CA_PRIVATE_KEY_KEY
+              value: {{ $.Values.runtimeProfile.ca.privateKeyKey | quote }}
+            - name: AKSH_INJECTOR_CA_PUBLIC_CERT_KEY
+              value: {{ $.Values.runtimeProfile.ca.publicCertKey | quote }}
+            {{- end }}
+            {{- with .Values.runtimeProfile.staticToken.secretName }}
+            - name: AKSH_INJECTOR_STATIC_TOKEN_SECRET_NAME
+              value: {{ . | quote }}
+            - name: AKSH_INJECTOR_STATIC_TOKEN_SECRET_KEY
+              value: {{ $.Values.runtimeProfile.staticToken.secretKey | quote }}
+            {{- end }}
+            - name: AKSH_INJECTOR_POD_ATTRIBUTION
+              value: {{ .Values.runtimeProfile.podAttribution | quote }}
           ports:
             - name: https
               containerPort: {{ .Values.injector.listenPort }}

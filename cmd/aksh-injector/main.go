@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -41,7 +42,43 @@ func main() {
 	patchInterval := flag.Duration("cabundle-patch-interval", 5*time.Minute, "caBundle reconciliation interval")
 	proxyImage := flag.String("proxy-image", envOrDefault("AKSH_PROXY_IMAGE", "aksh-proxy:latest"), "aksh proxy image")
 	metricsAddr := flag.String("metrics-addr", envOrDefault("AKSH_INJECTOR_METRICS_ADDR", ":9464"), "Prometheus metrics listen address")
+
+	// Runtime profile: optional, environment-specific settings stamped into the
+	// injected aksh sidecar. Unset flags reproduce the legacy placeholder
+	// profile. Each flag defaults from an AKSH_INJECTOR_* env var so the Helm
+	// chart can wire them through the container environment.
+	entraTenantID := flag.String("entra-tenant-id", os.Getenv("AKSH_INJECTOR_ENTRA_TENANT_ID"), "Entra tenant ID stamped into injected pods")
+	entraClientID := flag.String("entra-client-id", os.Getenv("AKSH_INJECTOR_ENTRA_CLIENT_ID"), "Entra client ID stamped into injected pods")
+	entraAuthority := flag.String("entra-authority", os.Getenv("AKSH_INJECTOR_ENTRA_AUTHORITY"), "Entra authority URL stamped into injected pods")
+	hostCgroupMount := flag.String("host-cgroup-mount", os.Getenv("AKSH_INJECTOR_HOST_CGROUP_MOUNT"), "AKSH_CAPTURE_HOST_CGROUP_MOUNT value stamped into injected pods")
+	localCgroupMount := flag.String("local-cgroup-mount", os.Getenv("AKSH_INJECTOR_LOCAL_CGROUP_MOUNT"), "AKSH_CAPTURE_LOCAL_CGROUP_MOUNT value stamped into injected pods")
+	captureDNSServer := flag.String("capture-dns-server", os.Getenv("AKSH_INJECTOR_CAPTURE_DNS_SERVER"), "AKSH_CAPTURE_DNS_SERVER host:port stamped into injected pods")
+	captureBypassCIDRs := flag.String("capture-bypass-cidrs", os.Getenv("AKSH_INJECTOR_CAPTURE_BYPASS_CIDRS"), "AKSH_CAPTURE_BYPASS_CIDRS list stamped into injected pods")
+	caSecretName := flag.String("ca-secret-name", os.Getenv("AKSH_INJECTOR_CA_SECRET_NAME"), "Secret backing the pod ca-priv/ca-pub volumes (empty = emptyDir)")
+	caCertKey := flag.String("ca-cert-key", envOrDefault("AKSH_INJECTOR_CA_CERT_KEY", "tls.crt"), "CA Secret key for the certificate (ca-priv)")
+	caPrivateKeyKey := flag.String("ca-private-key-key", envOrDefault("AKSH_INJECTOR_CA_PRIVATE_KEY_KEY", "tls.key"), "CA Secret key for the private key (ca-priv)")
+	caPublicCertKey := flag.String("ca-public-cert-key", envOrDefault("AKSH_INJECTOR_CA_PUBLIC_CERT_KEY", "tls.crt"), "CA Secret key for the public certificate (ca-pub)")
+	staticTokenSecretName := flag.String("static-token-secret-name", os.Getenv("AKSH_INJECTOR_STATIC_TOKEN_SECRET_NAME"), "Secret holding a static bearer credential mounted only into the aksh sidecar (empty = disabled)")
+	staticTokenSecretKey := flag.String("static-token-secret-key", envOrDefault("AKSH_INJECTOR_STATIC_TOKEN_SECRET_KEY", "token"), "static-token Secret key mapped to the on-disk token file")
+	podAttribution := flag.Bool("pod-attribution", envBoolOrDefault("AKSH_INJECTOR_POD_ATTRIBUTION", true), "stamp downward-API pod attribution env vars into injected pods")
 	flag.Parse()
+
+	profile := injector.RuntimeProfile{
+		EntraTenantID:         *entraTenantID,
+		EntraClientID:         *entraClientID,
+		EntraAuthority:        *entraAuthority,
+		HostCgroupMount:       *hostCgroupMount,
+		LocalCgroupMount:      *localCgroupMount,
+		DNSServer:             *captureDNSServer,
+		BypassCIDRs:           *captureBypassCIDRs,
+		CASecretName:          *caSecretName,
+		CACertKey:             *caCertKey,
+		CAPrivateKeyKey:       *caPrivateKeyKey,
+		CAPublicCertKey:       *caPublicCertKey,
+		StaticTokenSecretName: *staticTokenSecretName,
+		StaticTokenSecretKey:  *staticTokenSecretKey,
+		PodAttribution:        *podAttribution,
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -60,6 +97,7 @@ func main() {
 		OptInLabelKey:    "aksh.dev/inject",
 		OptInLabelValue:  "enabled",
 		InjectionVersion: "v1",
+		RuntimeProfile:   profile,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -141,6 +179,21 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// envBoolOrDefault parses a boolean env var, returning fallback when unset or
+// unparseable. Accepts the strconv.ParseBool forms (1/t/T/TRUE/true/... and
+// their false counterparts).
+func envBoolOrDefault(name string, fallback bool) bool {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func podNamespace() string {

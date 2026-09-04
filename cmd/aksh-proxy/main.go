@@ -29,6 +29,7 @@ import (
 	"github.com/girishmotwani/aksh/internal/policy/watch"
 	"github.com/girishmotwani/aksh/internal/runtime"
 	"github.com/girishmotwani/aksh/internal/token/entra"
+	"github.com/girishmotwani/aksh/internal/token/static"
 )
 
 // deps holds the injectable seams for run so tests can substitute fakes for the
@@ -232,6 +233,17 @@ func run(ctx context.Context, d deps) int {
 		return 1
 	}
 	defer func() { _ = handle.Close() }()
+
+	// Bounded startup confirmation (no secrets): record the resolved pod cgroup
+	// path plus the kernel cgroup id and attached program count from the live
+	// AttachInfo. This lets operators and demo validation assert that capture
+	// attached to the ACTUAL pod cgroup — a nonzero cgroup_id and program_count
+	// prove a real attachment — instead of grepping vague startup text.
+	attachInfo := handle.AttachInfo()
+	log.Info("aksh-proxy: eBPF capture attached",
+		"pod_cgroup_path", captureOpts.PodPath,
+		"cgroup_id", attachInfo.CgroupID,
+		"program_count", len(attachInfo.ProgIDs))
 
 	// serveCtx is cancelled by the attach-loss fail-closed trigger and by a
 	// policy watcher fatal error so the orchestrator drains cleanly.
@@ -443,12 +455,21 @@ func mainRun() int {
 			return pki.NewPodCAProvider(c, pki.PodCAOptions{PrivDir: cfg.CA.PrivDir, PubDir: cfg.CA.PubDir})
 		},
 		localSelfTest: func(context.Context) error {
-			return entra.LocalSelfTest(entra.Options{
+			if err := entra.LocalSelfTest(entra.Options{
 				TenantID:    cfg.Token.Entra.TenantID,
 				ClientID:    cfg.Token.Entra.ClientID,
 				Authority:   cfg.Token.Entra.Authority,
 				SATokenPath: cfg.Token.SATokenPath,
-			})
+			}); err != nil {
+				return err
+			}
+			// When a static bearer credential is configured, verify its material
+			// locally (no network) so a missing/unreadable/empty secret fails
+			// closed at startup rather than on first matched request.
+			if path := cfg.Token.Static.Path; path != "" {
+				return static.LocalSelfTest(static.Options{TokenPath: path})
+			}
+			return nil
 		},
 		auditSink: func() (audit.AuditSink, error) { return audit.NewStreamSink(os.Stdout), nil },
 		privDrop:  capture.DropPrivileges,

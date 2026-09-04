@@ -15,6 +15,7 @@ import (
 
 	"github.com/girishmotwani/aksh/internal/audit"
 	"github.com/girishmotwani/aksh/internal/config"
+	"github.com/girishmotwani/aksh/internal/dataplane"
 	"github.com/girishmotwani/aksh/internal/dataplane/capture"
 )
 
@@ -153,5 +154,49 @@ func TestRun_PodCgroupResolutionFails_IncrementsProxyCgroupResolutionErrorsMetri
 	}
 	if got := proxyCounterValue(t, reg, "aksh_proxy_cgroup_resolution_errors_total"); got < 1 {
 		t.Fatalf("aksh_proxy_cgroup_resolution_errors_total = %v, want >= 1", got)
+	}
+}
+
+// TestRun_AfterLoadAndAttach_LogsCaptureAttachedWithCgroupAndProgramCount asserts
+// the bounded startup confirmation emitted right after a successful eager
+// LoadAndAttach records the resolved pod cgroup path plus the nonzero kernel
+// cgroup id and attached program count, so demo validation can assert the
+// sidecar attached to the actual pod cgroup instead of grepping vague text.
+// Startup is stopped immediately after by failing resolver construction, which
+// runs after the attach log.
+func TestRun_AfterLoadAndAttach_LogsCaptureAttachedWithCgroupAndProgramCount(t *testing.T) {
+	logger, sb := newProxyCaptureLogger()
+	code := run(context.Background(), deps{
+		loadConfig:            func() (config.Config, error) { return validConfig(), nil },
+		log:                   logger,
+		deriveCgroupCandidate: func(string, string) (string, error) { return "/host/kubepods/pod", nil },
+		newPodCgroupResolver: func(config.Config) (podCgroupResolver, error) {
+			return &fakeCgroupResolver{resolved: "/proc/1/root/sys/fs/cgroup"}, nil
+		},
+		loadAndAttach: func(context.Context, *capture.Options) (captureHandle, error) {
+			return &fakeHandle{attachInfo: healthyAttach()}, nil
+		},
+		// Abort right after the attach log: newResolver runs next and its
+		// failure returns non-zero without needing a kernel.
+		newResolver: func(any, capture.Options) (dataplane.DestinationResolver, error) {
+			return nil, errors.New("stop after attach log")
+		},
+	})
+	if code == 0 {
+		t.Fatal("run() = 0, want non-zero (stopped after attach log)")
+	}
+	record, ok := proxyFindLog(t, sb, "aksh-proxy: eBPF capture attached")
+	if !ok {
+		t.Fatalf("attach-confirmation log not found; records=%s", sb.String())
+	}
+	if record["pod_cgroup_path"] != "/proc/1/root/sys/fs/cgroup" {
+		t.Fatalf("pod_cgroup_path = %v, want the resolved pod cgroup path", record["pod_cgroup_path"])
+	}
+	// JSON numbers decode as float64; healthyAttach() has CgroupID 99 and one program.
+	if cid, _ := record["cgroup_id"].(float64); cid != 99 {
+		t.Fatalf("cgroup_id = %v, want 99 (nonzero kernel cgroup id)", record["cgroup_id"])
+	}
+	if pc, _ := record["program_count"].(float64); pc != 1 {
+		t.Fatalf("program_count = %v, want 1 (nonzero attached program count)", record["program_count"])
 	}
 }
