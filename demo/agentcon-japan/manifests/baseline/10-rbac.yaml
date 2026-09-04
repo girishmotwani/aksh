@@ -1,0 +1,26 @@
+# 10-rbac.yaml — the demo agent's ServiceAccount.
+#
+# Least privilege by construction: in the BASELINE state this ServiceAccount has
+# NO RBAC at all. The agent talks to the kagent controller over A2A and to the
+# OpenAI API over HTTPS; neither needs the Kubernetes API. The in-pod diagnostics MCP
+# reads ONLY its mounted, pre-sanitized bundle — it never reads a Secret, a
+# ServiceAccount token, or the Kubernetes API (enforced in the MCP source and
+# reinforced by giving this identity nothing to read).
+#
+# The single Role this identity is ever granted — read-only get/list/watch on
+# akshpolicies in its OWN namespace, which the injected aksh-proxy sidecar needs
+# to evaluate policy — is added ONLY at `protect` time
+# (manifests/protect/20-policy-rbac.yaml), so the "before" state carries zero
+# cluster permissions.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentcon-agent-sa
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+    app.kubernetes.io/name: agentcon-agent
+# Note: automountServiceAccountToken is left at its default (mounted). The
+# injected aksh-proxy uses the projected token via in-cluster config to read
+# AkshPolicy. The aksh validating webhook only rejects an *explicit*
+# automountServiceAccountToken: true, so leaving it unset is correct.

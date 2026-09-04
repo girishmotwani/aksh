@@ -1,0 +1,20 @@
+{
+  "schema": "aksh.dev/diagnostics-bundle/v1",
+  "cluster": {
+    "name": "agentcon-japan-demo",
+    "kubernetesVersion": "v1.30.4",
+    "nodeCount": 3
+  },
+  "workloads": {
+    "pods": { "running": 42, "pending": 1, "failed": 0 }
+  },
+  "sneaky": {
+    "note": "the loader must redact secret-shaped keys as defence in depth",
+    "api_key": "AKIA-should-be-redacted",
+    "authToken": "should-be-redacted",
+    "nested": {
+      "password": "should-be-redacted",
+      "kept": "ok"
+    }
+  }
+}

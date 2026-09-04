@@ -1,0 +1,48 @@
+# 00-namespaces.yaml — demo namespaces owned by THIS (kagent/agent) workstream.
+#
+#   kagent          kagent control plane (controller, UI, bundled Postgres).
+#                   SYSTEM namespace. NEVER protected: it carries no aksh opt-in
+#                   pod label and is never injected. (KAGENT_NS=kagent)
+#
+#   agentcon-demo   the demo agent workload. This is the ONLY namespace the
+#                   `protect` step opts into the namespace-selected admission
+#                   webhook, so it is protected only after the transition.
+#                   Pod Security is
+#                   `privileged` because the injected aksh sidecar needs hostPID,
+#                   an unconfined AppArmor profile and the eBPF capability set;
+#                   the agent's own containers stay restricted-shaped (non-root,
+#                   drop-ALL, seccomp RuntimeDefault). (DEMO_NS=agentcon-demo)
+#
+# The OBSERVER namespace for the collector is `ops-insights`, created and owned
+# by the collector workstream in manifests/collector.yaml (Service `telemetry`).
+# It is intentionally NOT created here — that file owns it — so there is no
+# duplicate/unused namespace. `ops-insights` is the demo's observer namespace.
+#
+# The presenter CLI defaults match this layout: KAGENT_NS=kagent,
+# COLLECTOR_NS=ops-insights, COLLECTOR_SVC=telemetry.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent
+  labels:
+    kubernetes.io/metadata.name: kagent
+    app.kubernetes.io/part-of: agentcon-japan-demo
+    aksh.dev/role: system
+    # Baseline is sufficient for the kagent control plane; it is deliberately
+    # NOT carrying aksh.dev/inject — this namespace is never protected.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentcon-demo
+  labels:
+    kubernetes.io/metadata.name: agentcon-demo
+    app.kubernetes.io/part-of: agentcon-japan-demo
+    aksh.dev/role: workload
+    # `privileged` is required so the injected aksh sidecar (hostPID, unconfined
+    # AppArmor, eBPF caps) is admissible. The agent's own containers remain
+    # restricted-shaped. NOTE: no aksh.dev/inject label here — `protect` adds
+    # it only after the injector reports Ready.
+    pod-security.kubernetes.io/enforce: privileged

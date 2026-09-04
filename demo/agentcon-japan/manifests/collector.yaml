@@ -1,0 +1,151 @@
+# AgentCon Japan demo — telemetry collector ("ops-insights").
+#
+# This is the external telemetry endpoint the demo Kagent agent is coaxed into
+# exfiltrating cluster diagnostics to. Aksh transparently captures that egress;
+# this collector is what the traffic would otherwise reach, and its observer UI
+# makes the captured payloads visible on stage.
+#
+# Two surfaces, deliberately on separate ports/listeners:
+#   - HTTPS ingest (443 -> 8443): write-only POST /api/v1/cluster-diagnostics.
+#   - HTTP observer (80 -> 8080): dashboard + harness endpoints (events/count/reset).
+# The reset/enumerate surface is only on the HTTP observer, never on ingest.
+#
+# The agent dials the hostname telemetry.ops-insights.example; the demo's CoreDNS
+# rewrite must map that name to Service telemetry.ops-insights.svc.cluster.local,
+# and the TLS leaf in the collector-tls Secret must carry that name as its CN/SAN.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ops-insights
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+---
+# TLS material for the HTTPS ingest listener is delivered by the Secret
+# "collector-tls" (type kubernetes.io/tls, keys tls.crt + tls.key). It is NOT
+# defined here on purpose: no key material lives in source control, and the demo
+# harness/script owns its creation so it can mint a leaf whose CN/SAN is
+# telemetry.ops-insights.example, e.g.:
+#
+#   kubectl -n ops-insights create secret tls collector-tls \
+#     --cert=telemetry.crt --key=telemetry.key
+#
+# The Deployment mounts it read-only at /etc/collector/tls. Until the script has
+# created it, the Pod stays Pending (fail-closed: no cert, no ingest). A template
+# for reference (do not apply as-is; the empty values are placeholders):
+#
+#   apiVersion: v1
+#   kind: Secret
+#   metadata:
+#     name: collector-tls
+#     namespace: ops-insights
+#   type: kubernetes.io/tls
+#   stringData:
+#     tls.crt: ""   # populated by the demo script
+#     tls.key: ""   # populated by the demo script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemetry
+  namespace: ops-insights
+  labels:
+    app.kubernetes.io/name: collector
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  selector:
+    app.kubernetes.io/name: collector
+  ports:
+    - name: https
+      port: 443
+      targetPort: ingest
+      protocol: TCP
+    - name: http
+      port: 80
+      targetPort: ui
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector
+  namespace: ops-insights
+  labels:
+    app.kubernetes.io/name: collector
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: collector
+        app.kubernetes.io/part-of: agentcon-japan-demo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: collector:demo
+          # Side-loaded into the demo cluster like the other demo images; pin an
+          # immutable tag/digest for any real deployment.
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-ingest-addr=:8443"
+            - "-ui-addr=:8080"
+            - "-tls-cert=/etc/collector/tls/tls.crt"
+            - "-tls-key=/etc/collector/tls/tls.key"
+            - "-store-cap=1000"
+          ports:
+            - name: ingest
+              containerPort: 8443
+              protocol: TCP
+            - name: ui
+              containerPort: 8080
+              protocol: TCP
+          # Readiness proves the HTTPS ingest listener (the load-bearing surface)
+          # is serving; kubelet skips cert verification for HTTPS probes.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: ingest
+              scheme: HTTPS
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          # Liveness watches the HTTP observer listener, so both surfaces are
+          # covered across the two probes.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: ui
+              scheme: HTTP
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/collector/tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: tls
+          secret:
+            secretName: collector-tls

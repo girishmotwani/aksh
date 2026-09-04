@@ -1,0 +1,50 @@
+{
+  "schema": "aksh.dev/diagnostics-bundle/v1",
+  "generatedBy": "agentcon-japan-demo (synthetic, pre-sanitized)",
+  "cluster": {
+    "name": "agentcon-japan-demo",
+    "kubernetesVersion": "v1.30.4",
+    "platform": "kind",
+    "region": "japaneast",
+    "nodeCount": 3
+  },
+  "nodes": [
+    { "name": "node-a", "roles": ["control-plane"], "kubeletVersion": "v1.30.4", "ready": true, "arch": "arm64", "os": "linux", "kernel": "6.6.32", "allocatable": { "cpu": "4", "memoryMi": 8192, "pods": 110 } },
+    { "name": "node-b", "roles": ["worker"], "kubeletVersion": "v1.30.4", "ready": true, "arch": "arm64", "os": "linux", "kernel": "6.6.32", "allocatable": { "cpu": "4", "memoryMi": 8192, "pods": 110 } },
+    { "name": "node-c", "roles": ["worker"], "kubeletVersion": "v1.30.4", "ready": true, "arch": "arm64", "os": "linux", "kernel": "6.6.32", "allocatable": { "cpu": "4", "memoryMi": 8192, "pods": 110 } }
+  ],
+  "workloads": {
+    "namespaceCount": 7,
+    "pods": { "running": 42, "pending": 1, "succeeded": 6, "failed": 0, "unknown": 0 },
+    "restartsLast24h": 5,
+    "topNamespacesByPods": [
+      { "namespace": "kagent", "pods": 5 },
+      { "namespace": "agentcon-demo", "pods": 1 },
+      { "namespace": "agentcon-observer", "pods": 1 },
+      { "namespace": "kube-system", "pods": 18 }
+    ]
+  },
+  "deployments": [
+    { "namespace": "kagent", "name": "kagent-controller", "desired": 1, "available": 1, "updated": 1 },
+    { "namespace": "kagent", "name": "kagent-ui", "desired": 1, "available": 1, "updated": 1 },
+    { "namespace": "agentcon-demo", "name": "agentcon-agent", "desired": 1, "available": 1, "updated": 1 },
+    { "namespace": "agentcon-observer", "name": "collector", "desired": 1, "available": 1, "updated": 1 }
+  ],
+  "nodeConditions": [
+    { "type": "MemoryPressure", "status": "False" },
+    { "type": "DiskPressure", "status": "False" },
+    { "type": "PIDPressure", "status": "False" },
+    { "type": "Ready", "status": "True" }
+  ],
+  "recentEvents": [
+    { "namespace": "agentcon-demo", "type": "Normal", "reason": "Scheduled", "object": "pod/agentcon-agent", "count": 1, "message": "Successfully assigned agentcon-demo/agentcon-agent to node-b" },
+    { "namespace": "agentcon-demo", "type": "Normal", "reason": "Pulled", "object": "pod/agentcon-agent", "count": 1, "message": "Container image already present on machine" },
+    { "namespace": "kube-system", "type": "Warning", "reason": "BackOff", "object": "pod/coredns-sample", "count": 2, "message": "Back-off restarting failed container (synthetic sample)" }
+  ],
+  "resourcePressure": {
+    "cpuRequestsPercent": 38,
+    "memoryRequestsPercent": 51,
+    "ephemeralStoragePercent": 22
+  },
+  "notes": "Pre-sanitized synthetic demo bundle for AgentCon Japan. Contains NO secrets, tokens, kubeconfig, PII, real IPs, or live cluster reads. Every value here is fabricated for the talk."
+}

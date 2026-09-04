@@ -1,0 +1,108 @@
+# values-demo.yaml — kagent Helm values for the AgentCon Japan / Aksh demo.
+#
+# Applied with the kagent chart PINNED to 0.9.12, into the (unprotected) kagent
+# system namespace:
+#
+#   helm install kagent kagent/kagent \
+#     --version 0.9.12 \
+#     --namespace kagent --create-namespace \
+#     -f demo/agentcon-japan/values-demo.yaml
+#   helm install kagent-crds kagent/kagent-crds --version 0.9.12 \
+#     --namespace kagent   # (CRDs first if not already installed)
+#
+# Design goals for the demo:
+#   * Pin kagent to 0.9.12 (done via --version at install; images below inherit
+#     the chart appVersion, so leave the tags empty rather than drift off 0.9.12).
+#   * Keep the UI on (side-by-side "before/after" chats are the whole demo).
+#   * Keep the bundled PostgreSQL and the single controller replica — this is a
+#     laptop kind cluster, not production.
+#   * Turn OFF every built-in agent and built-in tool server that is unrelated
+#     to this talk. The only agent is the declarative one we ship in
+#     manifests/baseline/40-agent.yaml, and its only tool is the in-pod
+#     diagnostics MCP (RemoteMCPServer), so none of the cilium/istio/helm/k8s/…
+#     agents or the grafana/querydoc/kagent-tools servers are needed. Fewer
+#     moving parts = a faster, more legible demo and a smaller egress surface.
+#
+# The controller watches all namespaces by default (rbac.namespaces: []), so a
+# kagent control plane in the `kagent` namespace reconciles the Agent/ModelConfig/
+# RemoteMCPServer we apply into `agentcon-demo`.
+
+# ---------------------------------------------------------------------------
+# Core components — retained.
+# ---------------------------------------------------------------------------
+
+# Inherit the chart's 0.9.12 appVersion for every image tag. Do NOT set a
+# floating tag here; the pin is the chart --version.
+tag: ""
+
+# Bundled PostgreSQL retained (dev/eval only — exactly this demo's shape).
+database:
+  postgres:
+    vectorEnabled: false
+    bundled:
+      enabled: true
+
+# Single controller replica retained.
+controller:
+  replicas: 1
+  loglevel: "info"
+  # The controller watches ALL namespaces (default), so it reconciles the
+  # Agent/ModelConfig/RemoteMCPServer we ship into agentcon-demo from here.
+  watchNamespaces: []
+  # The demo's RemoteMCPServer already uses a literal plaintext loopback URL
+  # (http://127.0.0.1:8000/mcp), so the https->http egress rewrite is neither
+  # needed nor wanted. Leave it off.
+  mcpEgressPlaintext: false
+
+# UI retained and enabled (there is no ui.enabled gate in this chart — the UI
+# Deployment is always rendered; we keep its defaults). The two-chat,
+# side-by-side flow in PRESENTER.md is driven entirely through this UI.
+ui:
+  replicas: 1
+
+# ---------------------------------------------------------------------------
+# LLM providers — the chart auto-generates a `default-model-config` ModelConfig
+# from providers.default. The demo's agent does NOT use it: it references our
+# own OpenAI ModelConfig (manifests/baseline/20-modelconfig.yaml,
+# name: agentcon-openai). We keep the provider default as OpenAI (matching the
+# demo) so the auto-generated ModelConfig is harmless. The demo Agent references
+# agentcon-openai instead; after protection its key is injected by Aksh.
+# ---------------------------------------------------------------------------
+providers:
+  default: openAI
+
+# ---------------------------------------------------------------------------
+# Built-in AGENTS — all disabled (unrelated to this talk).
+# ---------------------------------------------------------------------------
+k8s-agent:            { enabled: false }
+kgateway-agent:       { enabled: false }
+istio-agent:          { enabled: false }
+promql-agent:         { enabled: false }
+observability-agent:  { enabled: false }
+argo-rollouts-agent:  { enabled: false }
+helm-agent:           { enabled: false }
+cilium-policy-agent:  { enabled: false }
+cilium-manager-agent: { enabled: false }
+cilium-debug-agent:   { enabled: false }
+
+# ---------------------------------------------------------------------------
+# Built-in TOOLS / MCP servers — all disabled. The agent's only tool is the
+# in-pod diagnostics MCP we deploy ourselves as a RemoteMCPServer.
+# ---------------------------------------------------------------------------
+kagent-tools: { enabled: false }   # built-in tool server
+grafana-mcp:  { enabled: false }
+querydoc:     { enabled: false }
+# kmcp manages in-cluster MCPServer CRDs; the demo uses a RemoteMCPServer to an
+# in-pod loopback MCP instead, so the kmcp controller is not needed.
+kmcp:         { enabled: false }
+
+# ---------------------------------------------------------------------------
+# Observability — no telemetry export. This mirrors the AkshPolicy stance
+# ("no telemetry allow"): nothing in the demo should phone home. Tracing and
+# OTLP logging are already off by default; pinned here to be explicit.
+# ---------------------------------------------------------------------------
+otel:
+  tracing:
+    enabled: false
+  logging:
+    enabled: false

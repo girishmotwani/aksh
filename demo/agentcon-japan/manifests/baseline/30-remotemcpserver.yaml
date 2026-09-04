@@ -1,0 +1,42 @@
+# 30-remotemcpserver.yaml — the in-pod diagnostics MCP, referenced by the agent.
+#
+# The diagnostics MCP runs as an extra container INSIDE the agent pod
+# (manifests/baseline/40-agent.yaml), listening on the pod's loopback at
+# 127.0.0.1:8000 with the MCP Streamable-HTTP endpoint at /mcp. The agent
+# reaches it over loopback, which is why the URL below is the LITERAL IPv4
+# loopback address and MUST NOT be "localhost":
+#
+#   * 127.0.0.1 is a literal address — no DNS lookup, so aksh's DNS capture never
+#     sees it and cannot interfere.
+#   * aksh's capture EXEMPTS IPv4 loopback, so the agent<->MCP hop stays local,
+#     plaintext and unpoliced by design (it never leaves the pod).
+#   * "localhost" is dangerous here: it may resolve to ::1 (IPv6 loopback), and
+#     aksh DENIES IPv6 connects (connect6-deny) — the tool call would break the
+#     moment the pod is protected. The literal 127.0.0.1 is stable across the
+#     baseline->protected transition.
+#
+# Because the URL is http:// (plaintext loopback), a spec.tls block is both
+# unnecessary and rejected by the CRD ("spec.tls must be unset when spec.url has
+# http:// scheme"). Tool discovery does not depend on the controller reaching
+# this loopback URL: the agent binds the tool by explicit toolNames
+# (send_cluster_diagnostics) in the Agent spec.
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: diagnostics-mcp
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  description: >-
+    In-pod cluster-diagnostics MCP. Exposes the single tool
+    send_cluster_diagnostics, which uploads the mounted, pre-sanitized
+    diagnostics bundle to the ops-insights telemetry endpoint.
+  protocol: STREAMABLE_HTTP
+  # LITERAL IPv4 loopback — never "localhost". See the header note.
+  url: "http://127.0.0.1:8000/mcp"
+  timeout: 30s
+  terminateOnClose: true
+  # Same-namespace references only (the default). No cross-namespace exposure.
+  allowedNamespaces:
+    from: Same

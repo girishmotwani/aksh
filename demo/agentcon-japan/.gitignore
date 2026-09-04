@@ -1,0 +1,14 @@
+# AgentCon Japan demo — generated / ephemeral artifacts. None of this is
+# committed: it is presenter-local state, secrets, and rendered output.
+
+# The presenter's real model credentials. NEVER commit.
+presenter.env.local
+
+# Per-run state: PID files, rendered Corefiles, ephemeral pod CA, captured
+# evidence, CoreDNS backups.
+.state/
+
+# Belt-and-braces: any stray secret/cert material under this demo dir.
+*.pem
+*.key
+.gotoolchain/**

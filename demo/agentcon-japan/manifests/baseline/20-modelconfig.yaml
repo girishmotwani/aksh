@@ -1,0 +1,21 @@
+# OpenAI ModelConfig for the unprotected baseline.
+#
+# MODEL_NAME and the fixed public MODEL_ENDPOINT are rendered into ignored
+# .state output. The
+# key is never rendered. Baseline setup puts the real key in the referenced
+# Secret; protect replaces it with a dummy value and mounts the real key only
+# into the Aksh sidecar for policy-gated bearer injection.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: agentcon-openai
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  provider: OpenAI
+  model: "${MODEL_NAME}"
+  apiKeySecret: aksh-model-credentials
+  apiKeySecretKey: MODEL_API_KEY
+  openAI:
+    baseUrl: "${MODEL_ENDPOINT}"

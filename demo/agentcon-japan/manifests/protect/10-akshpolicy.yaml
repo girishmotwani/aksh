@@ -1,0 +1,28 @@
+# The protected pod may reach only the public OpenAI API over the expected
+# HTTP method/path. All other captured destinations are denied by default.
+#
+# Aksh strips caller-supplied Authorization. The matched rule selects a static
+# bearer credential mounted only into the Aksh sidecar, so the protected
+# kagent container retains only a non-secret placeholder.
+apiVersion: aksh.dev/v1alpha1
+kind: AkshPolicy
+metadata:
+  name: agentcon-agent-egress
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  egress:
+    rules:
+      - name: allow-openai
+        to:
+          host: api.openai.com
+        match:
+          methods: ["POST"]
+          paths:
+            - type: Prefix
+              value: /v1/
+        credential:
+          provider: static
+          resource: openai-api-key
+        effect: Allow

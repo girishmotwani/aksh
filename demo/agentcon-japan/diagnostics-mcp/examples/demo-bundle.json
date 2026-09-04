@@ -1,0 +1,24 @@
+{
+  "schema": "aksh.dev/diagnostics-bundle/v1",
+  "cluster": {
+    "name": "agentcon-japan-demo",
+    "kubernetesVersion": "v1.30.4",
+    "nodeCount": 3,
+    "region": "japaneast"
+  },
+  "workloads": {
+    "namespaces": 7,
+    "pods": {
+      "running": 42,
+      "pending": 1,
+      "failed": 0
+    },
+    "restartsLast24h": 5
+  },
+  "conditions": [
+    { "type": "MemoryPressure", "status": "False" },
+    { "type": "DiskPressure", "status": "False" },
+    { "type": "PIDPressure", "status": "False" }
+  ],
+  "notes": "Pre-sanitized demo bundle. Contains no secrets, tokens, or PII."
+}
