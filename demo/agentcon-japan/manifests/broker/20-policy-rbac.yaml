@@ -1,0 +1,35 @@
+# 20-policy-rbac.yaml — the ONLY RBAC the demo agent identity is ever granted.
+#
+# The injected aksh-proxy reads AkshPolicy objects from its OWN namespace using
+# the agent pod's ServiceAccount (agentcon-agent-sa), via in-cluster config. That
+# read is the single permission this identity needs, and it is granted here — at
+# `protect` time only — as a namespace-scoped, read-only Role. Nothing else: no
+# secret read, no cross-namespace access, no write. The diagnostics tool still
+# reads only its mounted bundle and never touches the API.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentcon-agent-policy-reader
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+rules:
+  - apiGroups: ["aksh.dev"]
+    resources: ["akshpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentcon-agent-policy-reader
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+subjects:
+  - kind: ServiceAccount
+    name: agentcon-agent-sa
+    namespace: agentcon-demo
+roleRef:
+  kind: Role
+  name: agentcon-agent-policy-reader
+  apiGroup: rbac.authorization.k8s.io

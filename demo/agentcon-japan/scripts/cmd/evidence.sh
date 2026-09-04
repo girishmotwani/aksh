@@ -7,16 +7,23 @@ cmd_evidence() {
   _e_list=1
   _e_livedeny=1
   _e_livesteal=1
+  _e_livebroker=1
   for _e_a in "$@"; do
     case "$_e_a" in
       --list) _e_list=0 ;;
       --live-deny) _e_livedeny=0 ;;
       --live-steal) _e_livesteal=0 ;;
+      --live-broker) _e_livebroker=0 ;;
       -h|--help) _evidence_usage; return 0 ;;
     esac
   done
   load_presenter_env
   ensure_state_dirs
+
+  if [ "$_e_livebroker" -eq 0 ]; then
+    _evidence_live_broker
+    return $?
+  fi
 
   if [ "$_e_livesteal" -eq 0 ]; then
     _evidence_live_steal
@@ -120,6 +127,13 @@ Usage: demo.sh evidence [--list | --live-deny | --live-steal]
                 leak — no new leaked credential reaches the collector, the tool
                 reports HTTP 403, and a NEW ${DIAG_PATH} policy_no_match audit
                 record appears. Requires a PROTECTED cluster.
+  --live-broker MODEL-FREE credential-broker (middle step) contingency: drive
+                the diagnostics-mcp 'steal' CLI while the telemetry endpoint is
+                ALLOWED but unbrokered. Proves the broker boundary — the request
+                is ALLOWED and REACHES the collector (a new event), the tool
+                reports HTTP 202, aksh audits the egress as ALLOW, yet the
+                credential arrives EMPTY (stripped): no new real leak. Requires
+                the BROKER cluster (run 'broker').
 EOF
 }
 
@@ -321,5 +335,103 @@ _evidence_live_steal() {
   evidence_json_field "$_els_ev" "fail_count" "$FAIL_COUNT"
   evidence_json_end "$_els_ev"
   ok "structured evidence: $( basename "$_els_ev" )"
+  report_failures
+}
+
+# _evidence_live_broker — MODEL-FREE credential-broker (middle step) contingency.
+#
+# Requires the cluster to be in the BROKER state ('demo.sh broker'): aksh
+# installed with the telemetry endpoint ALLOWED but no credential provider, and
+# NO custody (the agent still holds the real token). It drives the diagnostics-
+# mcp 'steal' CLI, which sends the real credential in the Authorization header.
+# The expected outcome is the demo's headline broker moment: the request is
+# ALLOWED and REACHES the collector (a new event), but aksh strips the
+# Authorization so the collector receives an EMPTY credential — no new real leak.
+_evidence_live_broker() {
+  if ! cluster_exists; then
+    fail "cluster '$CLUSTER' is not up; run 'demo.sh setup' then 'demo.sh broker' first"
+    report_failures; return 1
+  fi
+  _elb_pod=$( running_pod_name "$PROTECT_TARGET_SELECTOR" )
+  if [ -z "$_elb_pod" ]; then
+    fail "no Running agent pod for '${PROTECT_TARGET_SELECTOR}'"; report_failures; return 1
+  fi
+  if ! kcn get pod "$_elb_pod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null | grep -qx aksh; then
+    fail "pod ${_elb_pod} has no aksh sidecar; run 'demo.sh broker' before --live-broker"; report_failures; return 1
+  fi
+  if ! kcn get pod "$_elb_pod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null | grep -qx "$MCP_CONTAINER"; then
+    fail "pod ${_elb_pod} has no '${MCP_CONTAINER}' container"; report_failures; return 1
+  fi
+  info "broker pod: ${_elb_pod}"
+
+  _elb_ep=$( live_steal_endpoint )
+  _elb_run=$( uniq_id "livebroker" )
+  step "live-broker: driving diagnostics-mcp 'steal' directly (model-free; telemetry ALLOWED, credential brokered)"
+  info "endpoint: ${_elb_ep}"
+
+  _elb_events_before=$( collector_event_count )
+  _elb_leak_before=$( collector_leak_count )
+  _elb_allow_before=$( kcn logs "$_elb_pod" -c aksh --tail=1500 2>/dev/null \
+    | grep -F "\"path\":\"${DIAG_PATH}\"" | grep -c '"disposition":"allow"' || true )
+  [ -n "$_elb_allow_before" ] || _elb_allow_before=0
+
+  _elb_out=$( kcn exec "$_elb_pod" -c "$MCP_CONTAINER" -- \
+    "$MCP_STEAL_BINARY" steal "$_elb_ep" 2>&1 )
+  info "diagnostics-mcp steal exit=$?"
+
+  sleep 3
+  _elb_events_after=$( collector_event_count )
+  _elb_leak_after=$( collector_leak_count )
+  _elb_allow_after=$( kcn logs "$_elb_pod" -c aksh --tail=1500 2>/dev/null \
+    | grep -F "\"path\":\"${DIAG_PATH}\"" | grep -c '"disposition":"allow"' || true )
+  [ -n "$_elb_allow_after" ] || _elb_allow_after=0
+
+  # 1) The exfil was ALLOWED (not blocked) — the request reached the collector.
+  case "$_elb_out" in
+    *"HTTP 202"*|*"succeeded"*) ok "live-broker: telemetry upload was ALLOWED (HTTP 202) — egress permitted" ;;
+    *"HTTP 403"*|*"403 Forbidden"*) fail "live-broker: upload was DENIED (403); expected the broker policy to ALLOW telemetry" ;;
+    *) fail "live-broker: unexpected tool output (expected HTTP 202 allowed): ${_elb_out}" ;;
+  esac
+  # 2) The collector RECEIVED the request (total events increased by one).
+  if [ -n "$_elb_events_before" ] && [ -n "$_elb_events_after" ] \
+     && [ "$_elb_events_after" -gt "$_elb_events_before" ] 2>/dev/null; then
+    ok "live-broker: collector RECEIVED the request (events ${_elb_events_before} -> ${_elb_events_after})"
+  else
+    fail "live-broker: collector did not record a new request (events ${_elb_events_before:-?} -> ${_elb_events_after:-?})"
+  fi
+  # 3) But the credential arrived EMPTY — no new real leak (stolen_credential).
+  if [ -n "$_elb_leak_before" ] && [ -n "$_elb_leak_after" ]; then
+    if [ "$_elb_leak_after" -eq "$_elb_leak_before" ] 2>/dev/null; then
+      ok "live-broker: credential was STRIPPED — collector received NO credential (leak count ${_elb_leak_after})"
+    else
+      fail "live-broker: collector recorded a credential (${_elb_leak_before} -> ${_elb_leak_after}); the strip did NOT happen"
+    fi
+  else
+    fail "live-broker: collector observer unavailable; cannot confirm the strip"
+  fi
+  # 4) aksh audited the telemetry egress as ALLOW (not deny).
+  if [ "$_elb_allow_after" -gt "$_elb_allow_before" ] 2>/dev/null; then
+    ok "live-broker: aksh audited the telemetry egress as ALLOW (${_elb_allow_before} -> ${_elb_allow_after})"
+  else
+    fail "live-broker: no NEW ${DIAG_PATH} allow audit record"
+  fi
+
+  _elb_ev="${EVIDENCE_DIR}/${_elb_run}-live-broker.json"
+  evidence_json_begin "$_elb_ev"
+  evidence_json_field "$_elb_ev" "run_id" "$_elb_run"
+  evidence_json_field "$_elb_ev" "timestamp" "$( iso_utc )"
+  evidence_json_field "$_elb_ev" "mode" "model-free credential broker (telemetry allowed, Authorization stripped)"
+  evidence_json_field "$_elb_ev" "endpoint" "$_elb_ep"
+  evidence_json_field "$_elb_ev" "pod" "$_elb_pod"
+  evidence_json_field "$_elb_ev" "events_before" "${_elb_events_before:-unknown}"
+  evidence_json_field "$_elb_ev" "events_after" "${_elb_events_after:-unknown}"
+  evidence_json_field "$_elb_ev" "collector_leaks_before" "${_elb_leak_before:-unknown}"
+  evidence_json_field "$_elb_ev" "collector_leaks_after" "${_elb_leak_after:-unknown}"
+  evidence_json_field "$_elb_ev" "allow_records_before" "$_elb_allow_before"
+  evidence_json_field "$_elb_ev" "allow_records_after" "$_elb_allow_after"
+  evidence_json_field "$_elb_ev" "tool_output" "$( printf '%s' "$_elb_out" | scrub_secrets | tr '\n' ' ' )"
+  evidence_json_field "$_elb_ev" "fail_count" "$FAIL_COUNT"
+  evidence_json_end "$_elb_ev"
+  ok "structured evidence: $( basename "$_elb_ev" )"
   report_failures
 }

@@ -251,6 +251,7 @@ FAKECURL
   assert_eq "https://telemetry.ops-insights.example/api/v1/cluster-diagnostics" \
             "$( live_steal_endpoint )" "live_steal_endpoint targets the exact telemetry host + diag path"
   assert_contains "$_eusage" "--live-steal" "evidence usage documents the credential-theft contingency"
+  assert_contains "$_eusage" "--live-broker" "evidence usage documents the broker (middle-step) contingency"
   assert_eq "agent-cloud-credential" "$AGENT_CRED_SECRET_NAME" "agent credential Secret name is stable"
   assert_eq "aksh-held-cloud-credential" "$AKSH_VAULT_CRED_SECRET_NAME" "Aksh custody vault Secret name is stable"
   assert_contains "$CRED_PLACEHOLDER" "PLACEHOLDER" "custody placeholder is clearly a non-secret marker"
@@ -288,6 +289,14 @@ FAKECURL
   assert_contains "$_agent_yaml" "exfiltrate_credential" "agent binds the exfiltrate_credential tool"
   assert_contains "$_agent_yaml" "agent-cloud-credential" "agent mounts the cloud-credential Secret"
   assert_contains "$_agent_yaml" "AKSH_DIAG_CREDENTIAL_PATH" "MCP container is told the credential path"
+
+  echo "== broker (middle) step: allow-telemetry policy =="
+  assert_eq "${DEMO_ROOT}/manifests/broker" "$BROKER_MANIFESTS_DIR" "BROKER_MANIFESTS_DIR points at the broker manifests"
+  _broker_policy=$( cat "${DEMO_ROOT}/manifests/broker/10-akshpolicy.yaml" )
+  assert_contains "$_broker_policy" "telemetry.ops-insights.example" "broker policy allows the telemetry host"
+  assert_contains "$_broker_policy" "allow-openai" "broker policy still allows the model host"
+  # The telemetry rule must NOT carry a credential provider (so aksh strips + injects nothing).
+  assert_not_contains "$( printf '%s' "$_broker_policy" | sed -n '/allow-telemetry/,$p' )" "provider:" "broker telemetry rule has no credential provider"
 
   echo "== exact pod-cgroup attachment record =="
   _attach_expected="/host/sys/fs/cgroup/pod123"

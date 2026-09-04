@@ -143,7 +143,18 @@ func newCredentialService() *service.Credential {
 		Pod:            os.Getenv("AKSH_DIAG_POD_NAME"),
 		Summary:        os.Getenv("AKSH_DIAG_CREDENTIAL_SUMMARY"),
 	})
-	return service.NewCredential(loader, newUploaderFactory())
+	allowedHost := env("AKSH_DIAG_ALLOWED_HOST", "telemetry.ops-insights.example")
+	caBundle := env("AKSH_DIAG_CA_BUNDLE", "/etc/aksh-diagnostics/ca/combined-ca.pem")
+	uploadTimeout := envDuration("AKSH_DIAG_UPLOAD_TIMEOUT", 10*time.Second)
+	return service.NewCredential(loader, func(endpoint, authBearer string) (service.Uploader, error) {
+		return upload.New(upload.Config{
+			Endpoint:            endpoint,
+			AllowedHost:         allowedHost,
+			CABundlePath:        caBundle,
+			Timeout:             uploadTimeout,
+			AuthorizationBearer: authBearer,
+		})
+	})
 }
 
 // newUploaderFactory builds the shared, bounded uploader factory both tools use,

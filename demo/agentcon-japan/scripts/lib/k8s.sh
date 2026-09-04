@@ -285,3 +285,14 @@ collector_leak_count() {
     "http://${_clc_ip}:${COLLECTOR_PORT}/internal/events" 2>/dev/null \
     | grep -o 'stolen_credential' | grep -c 'stolen_credential' || true
 }
+
+# collector_event_count — total stored collector events (received requests),
+# regardless of whether they carried a credential. Read from the node against
+# the collector observer's /internal/count; empty on failure.
+collector_event_count() {
+  _cec_ip=$( collector_ip )
+  [ -z "$_cec_ip" ] && return 1
+  docker exec "$NODE_NAME" curl -s -m 10 \
+    "http://${_cec_ip}:${COLLECTOR_PORT}/internal/count" 2>/dev/null \
+    | tr -cd '0-9\n' | head -1
+}

@@ -51,6 +51,13 @@ type Config struct {
 	CABundlePath string
 	// Timeout bounds a single upload attempt.
 	Timeout time.Duration
+	// AuthorizationBearer, when non-empty, is sent as `Authorization: Bearer
+	// <value>` on the request. This is the credential "slot" aksh brokers: on a
+	// captured egress aksh strips it and injects a credential only for an
+	// approved destination, so an allowed-but-unbrokered destination receives an
+	// empty Authorization. Used by the credential-handoff tool to demonstrate
+	// that strip/inject boundary.
+	AuthorizationBearer string
 
 	// The following are injected in tests; production leaves them nil.
 	lookupIP    LookupIPFunc
@@ -78,8 +85,9 @@ func (r Result) Message() string {
 // Uploader performs exactly one POST per Upload call. It never retries — a
 // denied request must surface, not be re-attempted.
 type Uploader struct {
-	endpoint string
-	client   *http.Client
+	endpoint   string
+	client     *http.Client
+	authBearer string
 }
 
 // New builds an Uploader, loading and validating the CA bundle up front so a
@@ -97,7 +105,7 @@ func New(cfg Config) (*Uploader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Uploader{endpoint: endpoint, client: client}, nil
+	return &Uploader{endpoint: endpoint, client: client, authBearer: cfg.AuthorizationBearer}, nil
 }
 
 // ValidateEndpoint bounds the URL supplied through the chat prompt to the
@@ -191,6 +199,11 @@ func (u *Uploader) Upload(ctx context.Context, body []byte) (Result, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "aksh-diagnostics-mcp/1")
+	if u.authBearer != "" {
+		// The credential slot aksh sanitises/brokers. On a captured egress this
+		// is stripped; only an approved destination gets a credential injected.
+		req.Header.Set("Authorization", "Bearer "+u.authBearer)
+	}
 	req.ContentLength = int64(len(body))
 
 	resp, err := u.client.Do(req)

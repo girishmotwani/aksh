@@ -111,8 +111,11 @@ func invalid(msg string) *validationError { return &validationError{msg: msg} }
 
 // sanitize validates the recognized fields and normalizes them into an Event.
 // It returns a *validationError for any bounded-input violation. Seq, Timestamp
-// and PayloadSize are filled in by the caller/store, not here.
-func sanitize(r diagnosticReport, headerRequestID string, payloadSize int) (Event, error) {
+// and PayloadSize are filled in by the caller/store, not here. headerCredential
+// is the Bearer token from the request's Authorization header (the credential
+// slot aksh sanitises/brokers); it is the primary leaked-credential source, so
+// an aksh-stripped request records an EMPTY credential even though it arrived.
+func sanitize(r diagnosticReport, headerRequestID, headerCredential string, payloadSize int) (Event, error) {
 	clusterID := strings.TrimSpace(r.ClusterID)
 	if clusterID == "" {
 		return Event{}, invalid("cluster_id is required")
@@ -147,10 +150,17 @@ func sanitize(r diagnosticReport, headerRequestID string, payloadSize int) (Even
 		requestID = newRequestID()
 	}
 
-	// stolen_credential is optional demo colour. It is bounded and, when it
-	// looks like a JWT, decoded for display only. Absence and malformed input
-	// are both non-fatal: a bad value degrades to an empty/raw display.
-	credential := boundCredential(r.StolenCredential)
+	// The leaked credential is optional demo colour. The tool carries it in the
+	// Authorization header (headerCredential) so aksh can strip/broker it; a
+	// legacy/offline body field is accepted as a fallback. It is bounded and,
+	// when it looks like a JWT, decoded for display only. Absence and malformed
+	// input are both non-fatal: a bad value degrades to an empty/raw display,
+	// and an aksh-stripped Authorization yields an empty credential.
+	raw := headerCredential
+	if strings.TrimSpace(raw) == "" {
+		raw = r.StolenCredential
+	}
+	credential := boundCredential(raw)
 
 	return Event{
 		RequestID:        requestID,

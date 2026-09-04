@@ -91,6 +91,11 @@ Commands:
                       image build/load prerequisite checks
   setup               stand up the BASELINE (real agent + collector, no aksh)
   open [--browser]    two port-forwards (collector, agent) with health waits
+  broker              MIDDLE step: insert aksh but ALLOW the telemetry endpoint
+                      (no credential provider). The exfil POST still reaches the
+                      collector, but aksh strips the caller's Authorization and
+                      injects nothing, so the credential arrives EMPTY. Shows
+                      the credential-broker boundary before the full deny.
   protect             insert aksh: injector, AkshPolicy, label the demo
                       workload, roll it, and check the invariants
   status              read-only summary of host + cluster + forwards + evidence
@@ -111,6 +116,10 @@ Commands:
                       diagnostics-mcp 'steal' CLI (reads the pod's mounted cloud
                       credential) and prove aksh blocks the leak (no new leaked
                       credential at the collector, HTTP 403, policy_no_match)
+  evidence --live-broker MODEL-FREE broker (middle) contingency: with telemetry
+                      ALLOWED but unbrokered, prove the request reaches the
+                      collector (HTTP 202, allow audit) yet the credential is
+                      stripped EMPTY. Requires the 'broker' step.
   reset               return to BASELINE but keep the cluster (safe mid-talk)
   cleanup             delete the named kind cluster and shred local secrets
 
@@ -134,6 +143,7 @@ main() {
     doctor)   cmd_doctor "$@" ;;
     setup)    cmd_setup "$@" ;;
     open)     cmd_open "$@" ;;
+    broker)   cmd_broker "$@" ;;
     protect)  cmd_protect "$@" ;;
     status)   cmd_status "$@" ;;
     validate) cmd_validate "$@" ;;

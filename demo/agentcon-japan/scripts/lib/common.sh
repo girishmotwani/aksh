@@ -116,6 +116,7 @@ RENDER_DIR="${STATE_DIR}/render"
 : "${MANIFESTS_DIR:=${DEMO_DIR}/manifests}"
 : "${BASELINE_MANIFESTS_DIR:=${MANIFESTS_DIR}/baseline}"
 : "${PROTECT_MANIFESTS_DIR:=${MANIFESTS_DIR}/protect}"
+: "${BROKER_MANIFESTS_DIR:=${MANIFESTS_DIR}/broker}"
 
 # ConfigMap the shim/injector consume for the live, cluster-assigned addresses.
 : "${NET_CONFIGMAP:=aksh-demo-net}"

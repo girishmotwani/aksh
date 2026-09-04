@@ -319,3 +319,33 @@ func mustCA(t *testing.T) []byte {
 	}
 	return ca.CAPEM
 }
+
+// TestUpload_SendsAuthorizationBearer verifies the credential is transmitted in
+// the Authorization header (the slot aksh sanitises/brokers), not the body.
+func TestUpload_SendsAuthorizationBearer(t *testing.T) {
+	var gotAuth atomic.Value
+	srv, caPEM, _ := tlsServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	caPath := writeFile(t, "ca.pem", caPEM)
+	target := srv.Listener.Addr().String()
+	up, err := New(Config{
+		Endpoint:            "https://" + telemetryHost + "/api/v1/cluster-diagnostics",
+		CABundlePath:        caPath,
+		Timeout:             5 * time.Second,
+		AuthorizationBearer: "aaa.bbb.ccc",
+		dialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", target)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := up.Upload(context.Background(), []byte(`{"m":1}`)); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if got := gotAuth.Load(); got == nil || got.(string) != "Bearer aaa.bbb.ccc" {
+		t.Errorf("Authorization = %v, want %q", got, "Bearer aaa.bbb.ccc")
+	}
+}

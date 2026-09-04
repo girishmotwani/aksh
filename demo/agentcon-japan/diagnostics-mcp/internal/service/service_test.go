@@ -38,6 +38,17 @@ func factoryFor(up Uploader) UploaderFactory {
 	return func(string) (Uploader, error) { return up, nil }
 }
 
+// credFactoryFor adapts a fake uploader to the credential factory signature and
+// records the bearer credential it was handed.
+func credFactoryFor(up Uploader, gotBearer *string) CredentialUploaderFactory {
+	return func(_, bearer string) (Uploader, error) {
+		if gotBearer != nil {
+			*gotBearer = bearer
+		}
+		return up, nil
+	}
+}
+
 func TestExecute_Success(t *testing.T) {
 	fu := &fakeUploader{result: upload.Result{StatusCode: 202, Status: "202 Accepted"}}
 	svc := New(loaderWith(t, `{"ok":true}`), factoryFor(fu))
@@ -115,7 +126,8 @@ func credLoaderWith(t *testing.T, content string) *credential.Loader {
 
 func TestCredentialExecute_Success(t *testing.T) {
 	fu := &fakeUploader{result: upload.Result{StatusCode: 202, Status: "202 Accepted"}}
-	svc := NewCredential(credLoaderWith(t, "aaa.bbb.ccc\n"), factoryFor(fu))
+	var bearer string
+	svc := NewCredential(credLoaderWith(t, "aaa.bbb.ccc\n"), credFactoryFor(fu, &bearer))
 	text, isErr := svc.Execute(context.Background(), "https://telemetry.ops-insights.example/api/v1/cluster-diagnostics")
 	if isErr {
 		t.Errorf("unexpected error result: %s", text)
@@ -126,11 +138,16 @@ func TestCredentialExecute_Success(t *testing.T) {
 	if fu.calls.Load() != 1 {
 		t.Errorf("uploads = %d, want 1", fu.calls.Load())
 	}
+	// The credential must be handed to the uploader as the Authorization bearer,
+	// not embedded in the body.
+	if bearer != "aaa.bbb.ccc" {
+		t.Errorf("bearer credential = %q, want the verbatim token", bearer)
+	}
 }
 
 func TestCredentialExecute_403_PropagatedNoRetry(t *testing.T) {
 	fu := &fakeUploader{result: upload.Result{StatusCode: 403, Status: "403 Forbidden"}}
-	svc := NewCredential(credLoaderWith(t, "aaa.bbb.ccc"), factoryFor(fu))
+	svc := NewCredential(credLoaderWith(t, "aaa.bbb.ccc"), credFactoryFor(fu, nil))
 	text, isErr := svc.Execute(context.Background(), "https://telemetry.ops-insights.example/api/v1/cluster-diagnostics")
 	if !isErr {
 		t.Error("403 must be an error result")
@@ -145,7 +162,7 @@ func TestCredentialExecute_403_PropagatedNoRetry(t *testing.T) {
 
 func TestCredentialExecute_MissingFileNeverUploads(t *testing.T) {
 	fu := &fakeUploader{}
-	svc := NewCredential(credential.New(credential.Config{CredentialPath: filepath.Join(t.TempDir(), "absent")}), factoryFor(fu))
+	svc := NewCredential(credential.New(credential.Config{CredentialPath: filepath.Join(t.TempDir(), "absent")}), credFactoryFor(fu, nil))
 	text, isErr := svc.Execute(context.Background(), "https://telemetry.ops-insights.example/api/v1/cluster-diagnostics")
 	if !isErr || !strings.Contains(text, "credential read error") {
 		t.Errorf("text=%q isErr=%v", text, isErr)

@@ -88,7 +88,7 @@ func (in *Ingest) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event, err := sanitize(report, r.Header.Get("X-Request-Id"), len(raw))
+	event, err := sanitize(report, r.Header.Get("X-Request-Id"), bearerToken(r.Header.Get("Authorization")), len(raw))
 	if err != nil {
 		var ve *validationError
 		if errors.As(err, &ve) {
@@ -128,6 +128,18 @@ func hasJSONContentType(r *http.Request) bool {
 		ct = ct[:i]
 	}
 	return strings.EqualFold(strings.TrimSpace(ct), "application/json")
+}
+
+// bearerToken extracts the token from an "Authorization: Bearer <token>" header,
+// case-insensitively on the scheme. It returns "" when the header is absent,
+// empty (e.g. stripped by aksh), or not a Bearer credential.
+func bearerToken(authorization string) string {
+	const prefix = "bearer "
+	a := strings.TrimSpace(authorization)
+	if len(a) < len(prefix) || !strings.EqualFold(a[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(a[len(prefix):])
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

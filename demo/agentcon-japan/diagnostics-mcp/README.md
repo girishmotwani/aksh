@@ -157,11 +157,21 @@ The HTTP status is returned **verbatim** and non-2xx is never retried.
 The diagnostics POST body is a JSON envelope whose top-level fields match the
 ops-insights collector's accepted schema (`cluster_id`, `namespace`, `pod`,
 `summary`, `request_id`) plus extra provenance the collector ignores (`schema`,
-`tool`, `generated_at`, `source`, and the sanitized `diagnostics`). The
-credential POST body reuses the same required top-level fields and adds
-`stolen_credential` — the mounted credential forwarded verbatim — which the
-collector displays (and decodes, if it is a JWT). Both bodies are kept below the
-collector's 64 KiB limit.
+`tool`, `generated_at`, `source`, and the sanitized `diagnostics`).
+
+The credential POST carries the same required top-level metadata fields, but the
+credential itself is **NOT in the body** — it is sent in the
+`Authorization: Bearer <credential>` header. That is deliberate: the
+Authorization header is the credential "slot" aksh sanitises and brokers, so an
+aksh-allowed-but-unbrokered destination receives the request with the credential
+**stripped to empty**, while a denied destination gets a 403. The collector
+reads the leaked credential from the Authorization header (falling back to a
+body `stolen_credential` field for offline/body-only paths) and decodes it if it
+is a JWT. Both bodies are kept below the collector's 64 KiB limit.
+
+This header transport is what enables the demo's three-step escalation: baseline
+(collector receives the real bearer token) → broker (telemetry allowed, bearer
+stripped, empty credential) → deny (HTTP 403).
 
 ## Integration requirements for the pod manifest (owned elsewhere)
 

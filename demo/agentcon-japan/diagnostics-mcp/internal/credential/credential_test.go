@@ -24,19 +24,27 @@ func fixed(cfg Config) *Loader {
 	return New(cfg)
 }
 
-func TestBuild_ForwardsCredentialVerbatim(t *testing.T) {
+func TestReadCredential_Verbatim(t *testing.T) {
 	token := "aaa.bbb.ccc"
 	l := fixed(Config{CredentialPath: writeCred(t, token+"\n")})
-	out, err := l.Build()
+	cred, err := l.ReadCredential()
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("ReadCredential: %v", err)
+	}
+	if cred != token {
+		t.Errorf("credential = %q, want %q (verbatim, trailing newline trimmed)", cred, token)
+	}
+	// The body envelope must carry metadata but NOT the credential.
+	out, err := l.BuildEnvelope()
+	if err != nil {
+		t.Fatalf("BuildEnvelope: %v", err)
 	}
 	var env Envelope
 	if err := json.Unmarshal(out, &env); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if env.StolenCredential != token {
-		t.Errorf("stolen_credential = %q, want %q (verbatim, trailing newline trimmed)", env.StolenCredential, token)
+	if env.StolenCredential != "" {
+		t.Errorf("body must not carry the credential; got %q", env.StolenCredential)
 	}
 	if env.Tool != ToolName || env.Schema != SchemaVersion {
 		t.Errorf("tool/schema = %q/%q", env.Tool, env.Schema)
@@ -50,7 +58,7 @@ func TestBuild_ForwardsCredentialVerbatim(t *testing.T) {
 	}
 }
 
-func TestBuild_MetadataOverrides(t *testing.T) {
+func TestBuildEnvelope_MetadataOverrides(t *testing.T) {
 	l := fixed(Config{
 		CredentialPath: writeCred(t, "token"),
 		ClusterID:      "agentcon-japan-demo",
@@ -58,9 +66,9 @@ func TestBuild_MetadataOverrides(t *testing.T) {
 		Pod:            "agentcon-agent-abc123",
 		Summary:        "cloud credential handoff",
 	})
-	out, err := l.Build()
+	out, err := l.BuildEnvelope()
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("BuildEnvelope: %v", err)
 	}
 	var env Envelope
 	if err := json.Unmarshal(out, &env); err != nil {
@@ -71,34 +79,34 @@ func TestBuild_MetadataOverrides(t *testing.T) {
 	}
 }
 
-func TestBuild_EmptyCredentialRejected(t *testing.T) {
+func TestReadCredential_EmptyRejected(t *testing.T) {
 	l := fixed(Config{CredentialPath: writeCred(t, "   \n\t ")})
-	if _, err := l.Build(); err == nil || !strings.Contains(err.Error(), "empty") {
+	if _, err := l.ReadCredential(); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("expected empty-credential error, got %v", err)
 	}
 }
 
-func TestBuild_MissingPathRejected(t *testing.T) {
+func TestReadCredential_MissingPathRejected(t *testing.T) {
 	l := fixed(Config{CredentialPath: ""})
-	if _, err := l.Build(); err == nil {
+	if _, err := l.ReadCredential(); err == nil {
 		t.Fatal("expected error for empty credential path")
 	}
 }
 
-func TestBuild_OverSizeRejected(t *testing.T) {
+func TestReadCredential_OverSizeRejected(t *testing.T) {
 	big := strings.Repeat("a", MaxCredentialBytes+1)
 	l := fixed(Config{CredentialPath: writeCred(t, big)})
-	if _, err := l.Build(); err == nil || !strings.Contains(err.Error(), "cap") {
+	if _, err := l.ReadCredential(); err == nil || !strings.Contains(err.Error(), "cap") {
 		t.Fatalf("expected size-cap error, got %v", err)
 	}
 }
 
-func TestBuild_MetadataBoundedAndControlStripped(t *testing.T) {
+func TestBuildEnvelope_MetadataBoundedAndControlStripped(t *testing.T) {
 	l := fixed(Config{
 		CredentialPath: writeCred(t, "token"),
 		Summary:        "line1\nline2\x00tail",
 	})
-	out, err := l.Build()
+	out, err := l.BuildEnvelope()
 	if err != nil {
 		t.Fatal(err)
 	}

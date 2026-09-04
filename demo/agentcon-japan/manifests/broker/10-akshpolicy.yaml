@@ -1,0 +1,46 @@
+# BROKER (middle) step policy.
+#
+# This policy ALLOWS the telemetry endpoint in addition to the model API — but
+# the telemetry rule carries NO credential provider. Aksh unconditionally strips
+# the caller-supplied Authorization on every captured request (SanitiseStage),
+# then injects a credential only for a rule that names one. So:
+#   * api.openai.com  -> allowed, Aksh injects the real OpenAI key (model works).
+#   * telemetry host  -> allowed, but Aksh injects nothing, so the request
+#                        reaches the collector with an EMPTY Authorization.
+#
+# The exfil POST therefore SUCCEEDS at the network layer yet carries no
+# credential: aksh's broker boundary means an unbrokered destination can never
+# receive a secret, even when egress is permitted.
+apiVersion: aksh.dev/v1alpha1
+kind: AkshPolicy
+metadata:
+  name: agentcon-agent-egress
+  namespace: agentcon-demo
+  labels:
+    app.kubernetes.io/part-of: agentcon-japan-demo
+spec:
+  egress:
+    rules:
+      - name: allow-openai
+        to:
+          host: api.openai.com
+        match:
+          methods: ["POST"]
+          paths:
+            - type: Prefix
+              value: /v1/
+        credential:
+          provider: static
+          resource: openai-api-key
+        effect: Allow
+      - name: allow-telemetry-unbrokered
+        to:
+          host: telemetry.ops-insights.example
+        match:
+          methods: ["POST"]
+          paths:
+            - type: Prefix
+              value: /api/v1/cluster-diagnostics
+        # NO credential block: Aksh strips the caller's Authorization and injects
+        # nothing, so the leaked credential arrives EMPTY at the collector.
+        effect: Allow

@@ -257,3 +257,70 @@ func TestDashboardRendersCredentialsWithoutInnerHTML(t *testing.T) {
 		}
 	}
 }
+
+// TestIngestCredentialFromAuthorizationHeader verifies the collector treats the
+// Authorization: Bearer token as the leaked credential (the tool now carries it
+// there so aksh can strip/broker it), even when the body has no credential.
+func TestIngestCredentialFromAuthorizationHeader(t *testing.T) {
+	ingest, store := newTestIngest(t, 10)
+	h := ingest.Handler()
+
+	token := sampleEntraJWT(t)
+	body, _ := json.Marshal(map[string]any{
+		"cluster_id": "prod-tokyo-1", "namespace": "kagent", "pod": "agent-0",
+	})
+	rr := postDiagnostics(h, string(body), func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+token)
+	})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rr.Code, rr.Body.String())
+	}
+	e := store.Snapshot()[0]
+	if e.StolenCredential != token {
+		t.Fatalf("stored credential = %q, want the Authorization bearer token", e.StolenCredential)
+	}
+	if e.CredentialClaims == nil || e.CredentialClaims.Tid != "72f988bf-86f1-41af-91ab-2d7cd011db47" {
+		t.Fatalf("claims not decoded from the header credential: %+v", e.CredentialClaims)
+	}
+}
+
+// TestIngestStrippedAuthorizationRecordsEmptyCredential models the aksh
+// broker/strip step: the request ARRIVES (allowed) but the Authorization was
+// stripped, so the event is stored with an empty credential and no claims.
+func TestIngestStrippedAuthorizationRecordsEmptyCredential(t *testing.T) {
+	ingest, store := newTestIngest(t, 10)
+	h := ingest.Handler()
+
+	body, _ := json.Marshal(map[string]any{
+		"cluster_id": "prod-tokyo-1", "namespace": "kagent", "pod": "agent-0",
+	})
+	// No Authorization header at all (stripped by aksh).
+	rr := postDiagnostics(h, string(body), nil)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rr.Code)
+	}
+	if store.Count() != 1 {
+		t.Fatalf("event count = %d, want 1 (request still received)", store.Count())
+	}
+	e := store.Snapshot()[0]
+	if e.StolenCredential != "" || e.CredentialClaims != nil {
+		t.Fatalf("expected empty credential after strip, got %q / %+v", e.StolenCredential, e.CredentialClaims)
+	}
+}
+
+func TestBearerToken(t *testing.T) {
+	cases := map[string]string{
+		"Bearer abc.def.ghi": "abc.def.ghi",
+		"bearer abc":         "abc",
+		"BEARER  spaced  ":   "spaced",
+		"":                   "",
+		"Basic dXNlcjpwdw==": "",
+		"abc.def.ghi":        "",
+		"Bearer ":            "",
+	}
+	for in, want := range cases {
+		if got := bearerToken(in); got != want {
+			t.Errorf("bearerToken(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
